@@ -9,6 +9,7 @@ Time: 5 minutes
 import pandas as pd
 import numpy as np
 import json
+import re
 from pathlib import Path
 from datetime import datetime
 import logging
@@ -48,8 +49,15 @@ KEEP_FEATURES = [
     'review_scores_communication',
     'review_scores_location',
     'review_scores_value',
-    'room_type'
+    'room_type',
+    'neighbourhood_group_cleansed',   # borough: Manhattan/Brooklyn/Queens/Bronx/Staten Island
+    'neighbourhood_cleansed',          # specific neighbourhood (221 unique values)
+    'bathrooms_text',                  # parsed to bathrooms + is_private_bath
+    'amenities',                       # parsed to amenity_count + key amenity flags
 ]
+
+# Key amenities with notable price correlation
+KEY_AMENITIES = ['Gym', 'Elevator', 'Dryer', 'Air conditioning', 'Washer', 'Pool']
 
 # ============================================================================
 # PIPELINE STEPS
@@ -94,6 +102,37 @@ def encode_categorical(df):
         df['host_is_superhost'] = (df['host_is_superhost'] == 't').astype(int)
         logger.info(f"   ✓ host_is_superhost: encoded to 0/1")
 
+    # Keep neighbourhood columns as strings — encoded in feature engineering step
+    for col in ['neighbourhood_group_cleansed', 'neighbourhood_cleansed']:
+        if col in df.columns:
+            df[col] = df[col].fillna('Unknown').astype(str)
+            logger.info(f"   ✓ {col}: kept as string ({df[col].nunique()} unique values)")
+
+    # Parse bathrooms_text → numeric bathrooms count + is_private_bath flag
+    if 'bathrooms_text' in df.columns:
+        def _parse_bath(s):
+            if pd.isna(s): return np.nan
+            nums = re.findall(r'\d+\.?\d*', str(s).lower())
+            return float(nums[0]) if nums else np.nan
+
+        df['bathrooms'] = df['bathrooms_text'].apply(_parse_bath)
+        df['is_private_bath'] = (~df['bathrooms_text'].str.lower().str.contains(
+            'shared', na=True)).astype(int)
+        df = df.drop(columns=['bathrooms_text'])
+        logger.info(f"   ✓ bathrooms_text → bathrooms (numeric) + is_private_bath (0/1)")
+
+    # Parse amenities → count + key amenity binary flags
+    if 'amenities' in df.columns:
+        df['amenity_count'] = df['amenities'].apply(
+            lambda x: len(str(x).split(',')) if pd.notna(x) else 0
+        )
+        for am in KEY_AMENITIES:
+            col = f'has_{am.lower().replace(" ", "_")}'
+            df[col] = df['amenities'].str.contains(am, case=False, na=False).astype(int)
+            logger.info(f"   ✓ {col}: {int(df[col].sum()):,} listings")
+        df = df.drop(columns=['amenities'])
+        logger.info(f"   ✓ amenities → amenity_count + {len(KEY_AMENITIES)} binary flags")
+
     logger.info(f"✓ Shape after encoding: {df.shape}")
     return df
 
@@ -113,6 +152,11 @@ def handle_missing_values(df):
         median = df['bedrooms'].median()
         df['bedrooms'] = df['bedrooms'].fillna(median)
         logger.info(f"   ✓ bedrooms: filled nulls with median ({median:.1f})")
+
+    if 'bathrooms' in df.columns and df['bathrooms'].isnull().sum() > 0:
+        median = df['bathrooms'].median()
+        df['bathrooms'] = df['bathrooms'].fillna(median)
+        logger.info(f"   ✓ bathrooms: filled nulls with median ({median:.1f})")
 
     if 'reviews_per_month' in df.columns and df['reviews_per_month'].isnull().sum() > 0:
         df['reviews_per_month'] = df['reviews_per_month'].fillna(0)
