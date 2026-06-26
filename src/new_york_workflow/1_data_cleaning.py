@@ -1,0 +1,204 @@
+"""
+PRODUCTION DATA CLEANING PIPELINE
+Phase 2: Clean listings data
+Input: listings.csv (35,036 rows × 90 columns)
+Output: clean_listings.csv (15,783 rows × 15 features)
+Time: 5 minutes
+"""
+
+import pandas as pd
+import numpy as np
+import json
+from pathlib import Path
+from datetime import datetime
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+BASE_DIR = Path("/Users/subhashmothukurigmail.com/Projects/ML_stuff")
+DATA_DIR = BASE_DIR / "data" / "airbnb"
+
+# ============================================================================
+# CONFIG
+# ============================================================================
+
+KEEP_FEATURES = [
+    'id',
+    'price',  # target variable
+    'accommodates',
+    'bedrooms',
+    'host_is_superhost',
+    'host_listings_count',
+    'latitude',
+    'longitude',
+    'minimum_minimum_nights',
+    'minimum_nights',
+    'minimum_nights_avg_ntm',
+    'number_of_reviews',
+    'number_of_reviews_ltm',
+    'reviews_per_month',
+    'review_scores_rating',
+    'review_scores_accuracy',
+    'review_scores_cleanliness',
+    'review_scores_checkin',
+    'review_scores_communication',
+    'review_scores_location',
+    'review_scores_value',
+    'room_type'
+]
+
+# ============================================================================
+# PIPELINE STEPS
+# ============================================================================
+
+def load_data(filepath):
+    logger.info(f"📂 Loading {filepath}...")
+    df = pd.read_csv(filepath)
+    logger.info(f"✓ Loaded: {df.shape[0]:,} rows × {df.shape[1]} columns")
+    return df
+
+
+def select_features(df, features):
+    logger.info(f"\n📋 Selecting {len(features)} features...")
+    missing = set(features) - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
+    df_selected = df[features].copy()
+    logger.info(f"✓ Selected {len(features)} features")
+    return df_selected
+
+
+def parse_price(df):
+    logger.info(f"\n💰 Parsing price column...")
+    df = df.copy()
+    before = df['price'].isnull().sum()
+    df['price'] = df['price'].replace(r'[\$,]', '', regex=True).astype(float)
+    logger.info(f"   ✓ price: string → float ({before:,} nulls, will be dropped)")
+    return df
+
+
+def encode_categorical(df):
+    logger.info(f"\n🔄 Encoding categorical features...")
+    df = df.copy()
+
+    if 'room_type' in df.columns:
+        room_dummies = pd.get_dummies(df['room_type'], prefix='room_type')
+        df = pd.concat([df, room_dummies], axis=1).drop('room_type', axis=1)
+        logger.info(f"   ✓ room_type: {room_dummies.shape[1]} columns created")
+
+    if 'host_is_superhost' in df.columns:
+        df['host_is_superhost'] = (df['host_is_superhost'] == 't').astype(int)
+        logger.info(f"   ✓ host_is_superhost: encoded to 0/1")
+
+    logger.info(f"✓ Shape after encoding: {df.shape}")
+    return df
+
+
+def handle_missing_values(df):
+    logger.info(f"\n🧹 Handling missing values...")
+    df = df.copy()
+
+    nulls_before = df.isnull().sum()
+    cols_with_nulls = nulls_before[nulls_before > 0]
+    if len(cols_with_nulls) > 0:
+        logger.info("   Nulls BEFORE cleaning:")
+        for col, count in cols_with_nulls.items():
+            logger.info(f"      {col:40s} | {count:>6,} ({count/len(df)*100:5.1f}%)")
+
+    if 'bedrooms' in df.columns and df['bedrooms'].isnull().sum() > 0:
+        median = df['bedrooms'].median()
+        df['bedrooms'] = df['bedrooms'].fillna(median)
+        logger.info(f"   ✓ bedrooms: filled nulls with median ({median:.1f})")
+
+    if 'reviews_per_month' in df.columns and df['reviews_per_month'].isnull().sum() > 0:
+        df['reviews_per_month'] = df['reviews_per_month'].fillna(0)
+        logger.info(f"   ✓ reviews_per_month: filled nulls with 0")
+
+    if 'host_listings_count' in df.columns and df['host_listings_count'].isnull().sum() > 0:
+        df['host_listings_count'] = df['host_listings_count'].fillna(1)
+        logger.info(f"   ✓ host_listings_count: filled nulls with 1")
+
+    review_score_cols = [
+        'review_scores_rating', 'review_scores_accuracy', 'review_scores_cleanliness',
+        'review_scores_checkin', 'review_scores_communication', 'review_scores_location',
+        'review_scores_value'
+    ]
+    for col in review_score_cols:
+        if col in df.columns and df[col].isnull().sum() > 0:
+            df[col] = df[col].fillna(0)
+    logger.info(f"   ✓ review_scores_*: filled nulls with 0 (listings with no reviews)")
+
+    rows_before = len(df)
+    df = df.dropna()
+    dropped = rows_before - len(df)
+    logger.info(f"   Dropped {dropped:,} rows with remaining nulls → {len(df):,} rows remaining")
+
+    return df
+
+
+def validate_output(df):
+    logger.info(f"\n✅ VALIDATING OUTPUT...")
+    logger.info(f"   Shape: {df.shape[0]:,} rows × {df.shape[1]} columns")
+    nulls = df.isnull().sum().sum()
+    if nulls == 0:
+        logger.info(f"   ✓ NO NULLS!")
+    else:
+        logger.warning(f"   ⚠️  {nulls} nulls remain")
+    logger.info(f"\n   Data types:\n{df.dtypes.to_string()}")
+    logger.info(f"\n   Statistics:\n{df.describe().to_string()}")
+
+
+def save_data(df, output_path):
+    logger.info(f"\n💾 Saving cleaned data...")
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    logger.info(f"✓ Saved: {output_path}")
+
+    metadata = {
+        'timestamp': datetime.now().isoformat(),
+        'rows': df.shape[0],
+        'columns': df.shape[1],
+        'column_names': list(df.columns),
+        'dtypes': df.dtypes.astype(str).to_dict()
+    }
+    metadata_path = str(output_path).replace('.csv', '_metadata.json')
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    logger.info(f"✓ Metadata saved: {metadata_path}")
+    return metadata
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+def main():
+    logger.info("=" * 80)
+    logger.info("PHASE 2 STEP 1: LISTINGS DATA CLEANING")
+    logger.info("=" * 80)
+
+    df = load_data(DATA_DIR / "listings.csv")
+    df = select_features(df, KEEP_FEATURES)
+    df = parse_price(df)
+    df = encode_categorical(df)
+    df = handle_missing_values(df)
+    validate_output(df)
+    metadata = save_data(df, DATA_DIR / "clean_listings.csv")
+
+    logger.info("\n" + "=" * 80)
+    logger.info("✅ CLEANING COMPLETE!")
+    logger.info("=" * 80)
+    logger.info(f"""
+INPUT:  listings.csv       (35,036 rows × 90 columns)
+OUTPUT: clean_listings.csv ({metadata['rows']:,} rows × {metadata['columns']} columns)
+
+✅ READY FOR: Model training (review scores embedded from listings.csv)
+""")
+    return df
+
+
+if __name__ == "__main__":
+    df_clean = main()
