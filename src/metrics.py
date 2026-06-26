@@ -78,7 +78,7 @@ class _Metrics:
                         "avg": round(sum(lats) / len(lats), 1) if lats else None,
                         "min": round(min(lats), 1) if lats else None,
                         "max": round(max(lats), 1) if lats else None,
-                        "p95": round(sorted(lats)[int(len(lats) * 0.95)], 1) if len(lats) >= 20 else None,
+                        "p95": round(sorted(lats)[int(len(lats) * 0.95)], 1) if len(lats) >= 5 else None,
                     },
                 }
 
