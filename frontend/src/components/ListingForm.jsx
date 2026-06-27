@@ -145,7 +145,7 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
             <FieldLabel>Borough</FieldLabel>
             <StyledSelect
               value={form.borough}
-              onChange={v => { set('borough', v); set('neighbourhood', '') }}
+              onChange={v => onChange({ ...form, borough: v, neighbourhood: '' })}
               options={BOROUGHS}
             />
           </div>
@@ -156,7 +156,7 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
           <StyledSelect
             value={form.neighbourhood}
             onChange={v => set('neighbourhood', v)}
-            options={['', ...neighbourhoods]}
+            options={neighbourhoods}
             placeholder="Use borough average"
           />
         </div>
@@ -192,17 +192,32 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
       <Card icon={Users} title="Capacity & Stay">
         <div>
           <FieldLabel>Guests</FieldLabel>
-          <RangeSlider value={form.accommodates} onChange={v => set('accommodates', v)} min={1} max={16} />
+          <RangeSlider
+            value={form.accommodates}
+            onChange={v => set('accommodates', v)}
+            min={1} max={16}
+            formatValue={v => v === 1 ? '1 guest' : `${v} guests`}
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-8">
           <div>
             <FieldLabel>Bedrooms</FieldLabel>
-            <RangeSlider value={form.bedrooms} onChange={v => set('bedrooms', v)} min={0} max={10} />
+            <RangeSlider
+              value={form.bedrooms}
+              onChange={v => set('bedrooms', v)}
+              min={0} max={10}
+              formatValue={v => v === 0 ? 'Studio' : v === 1 ? '1 bed' : `${v} beds`}
+            />
           </div>
           <div>
             <FieldLabel>Bathrooms</FieldLabel>
-            <RangeSlider value={form.bathrooms} onChange={v => set('bathrooms', v)} min={0} max={10} step={0.5} />
+            <RangeSlider
+              value={form.bathrooms}
+              onChange={v => set('bathrooms', v)}
+              min={0.5} max={10} step={0.5}
+              formatValue={v => v === 1 ? '1 bath' : `${v} baths`}
+            />
           </div>
         </div>
 
@@ -241,11 +256,29 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
       <Card icon={Wifi} title="Amenities">
         <div>
           <FieldLabel>Total amenity count</FieldLabel>
-          <RangeSlider value={form.amenity_count} onChange={v => set('amenity_count', v)} min={0} max={100} />
+          <RangeSlider
+            value={form.amenity_count}
+            onChange={v => set('amenity_count', v)}
+            min={5} max={100}
+            formatValue={v => `${v} items`}
+          />
+          <div className="mt-3 flex justify-between text-[11px] text-white/25">
+            <span>5 — bare minimum (bed, door)</span>
+            <span className="text-white/40 font-medium">
+              {form.amenity_count <= 20 ? 'Budget' :
+               form.amenity_count <= 40 ? 'Standard' :
+               form.amenity_count <= 65 ? 'Premium' : 'Luxury'}
+            </span>
+            <span>100 — every possible item</span>
+          </div>
+          <p className="mt-2 text-white/25 text-[11px] leading-relaxed">
+            Total items listed under "Amenities" on Airbnb — includes things like WiFi, TV,
+            kitchen, hangers, iron, shampoo. Most NYC listings are 15–40.
+          </p>
         </div>
 
         <div>
-          <FieldLabel>Key amenities</FieldLabel>
+          <FieldLabel>Key amenities <span className="text-white/30 font-normal text-xs ml-1">tick what applies</span></FieldLabel>
           <div className="flex flex-wrap gap-2">
             {AMENITIES.map(({ key, label }) => (
               <ToggleChip key={key} checked={form[key]} onChange={v => set(key, v)} label={label} />
