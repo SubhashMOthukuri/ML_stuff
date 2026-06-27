@@ -1,35 +1,41 @@
-import { Building2, Activity } from 'lucide-react'
+import { Building2 } from 'lucide-react'
 
 export default function Header({ modelInfo, apiAlive }) {
   return (
-    <header className="border-b border-white/[0.06] bg-black/50 backdrop-blur-xl sticky top-0 z-50">
-      <div className="max-w-6xl mx-auto px-8 py-4 flex items-center justify-between">
+    <header className="border-b border-white/[0.07] bg-black/60 backdrop-blur-xl sticky top-0 z-50">
+      {/* accent line */}
+      <div className="h-px bg-gradient-to-r from-transparent via-rose-500/50 to-transparent" />
 
+      <div className="max-w-6xl mx-auto px-8 h-16 flex items-center justify-between">
         {/* logo */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-rose-600 flex items-center justify-center shadow-lg shadow-rose-600/30">
+        <div className="flex items-center gap-3.5">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-rose-500 to-rose-700
+                          flex items-center justify-center shadow-lg shadow-rose-600/30">
             <Building2 size={17} className="text-white" />
           </div>
           <div>
-            <p className="text-white font-bold text-base leading-none">NYC Airbnb Pricer</p>
-            <p className="text-white/30 text-xs mt-0.5">XGBoost · April 2026 snapshot</p>
+            <p className="text-white font-bold text-[15px] leading-none">NYC Airbnb Pricer</p>
+            <p className="text-white/30 text-xs mt-0.5">XGBoost · ONNX Runtime · April 2026</p>
           </div>
         </div>
 
-        {/* stats + status */}
-        <div className="flex items-center gap-8">
+        {/* model stats + status */}
+        <div className="flex items-center gap-6">
           {modelInfo && (
-            <div className="hidden md:flex items-center gap-8">
-              <HeaderStat label="R² Score" value={modelInfo.r2_test} />
-              <HeaderStat label="MAE" value={`$${modelInfo.mae_dollar}/night`} />
-              <HeaderStat label="Features" value={`${modelInfo.n_features} engineered`} />
+            <div className="hidden md:flex items-center divide-x divide-white/[0.07]">
+              <Stat label="R²" value={modelInfo.r2_test} />
+              <Stat label="MAE" value={`$${modelInfo.mae_dollar}`} />
+              <Stat label="Features" value={modelInfo.n_features} />
+              <Stat label="Backend" value={modelInfo.inference_backend?.replace('ExecutionProvider', '')} />
             </div>
           )}
-          <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold
-            ${apiAlive
-              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-              : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${apiAlive ? 'bg-emerald-400' : 'bg-red-400'} animate-pulse`} />
+
+          <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+            apiAlive
+              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+              : 'bg-red-500/10 border-red-500/20 text-red-400'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${apiAlive ? 'bg-emerald-400' : 'bg-red-400'}`} />
             {apiAlive ? 'API live' : 'API offline'}
           </div>
         </div>
@@ -38,11 +44,11 @@ export default function Header({ modelInfo, apiAlive }) {
   )
 }
 
-function HeaderStat({ label, value }) {
+function Stat({ label, value }) {
   return (
-    <div>
-      <p className="text-white font-semibold text-sm">{value}</p>
-      <p className="text-white/30 text-xs">{label}</p>
+    <div className="px-5 first:pl-0 last:pr-0 text-center">
+      <p className="text-white font-bold text-sm leading-none">{value ?? '—'}</p>
+      <p className="text-white/30 text-[11px] mt-0.5">{label}</p>
     </div>
   )
 }
