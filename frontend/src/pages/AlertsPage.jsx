@@ -1,0 +1,220 @@
+import { useState } from 'react'
+import { Bell, Check, RefreshCw, AlertTriangle, XCircle, Info } from 'lucide-react'
+import { usePolling } from '../hooks/usePolling'
+
+const SEV_CFG = {
+  critical: { color: '#e11d48', bg: 'rgba(225,29,72,0.08)',   border: 'rgba(225,29,72,0.2)',  label: 'Critical', icon: XCircle       },
+  warning:  { color: '#f59e0b', bg: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.2)', label: 'Warning',  icon: AlertTriangle  },
+  info:     { color: '#60a5fa', bg: 'rgba(96,165,250,0.08)',  border: 'rgba(96,165,250,0.2)', label: 'Info',     icon: Info           },
+}
+
+function timeAgo(ts) {
+  if (!ts) return '—'
+  const diff = Math.floor((Date.now() - new Date(ts)) / 1000)
+  if (diff < 60)   return `${diff}s ago`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400)return `${Math.floor(diff / 3600)}h ago`
+  return new Date(ts).toLocaleDateString()
+}
+
+export default function AlertsPage() {
+  const { data, loading, error, refresh, lastFetch } = usePolling('/api/alerts?limit=100', 15000)
+  const [filter, setFilter] = useState('all')   // 'all' | 'pending'
+  const [acking, setAcking]       = useState(null)
+  const [ackingAll, setAckingAll] = useState(false)
+
+  async function acknowledge(id) {
+    setAcking(id)
+    try {
+      await fetch(`/api/alerts/${id}/acknowledge`, { method: 'POST' })
+      refresh()
+    } finally {
+      setAcking(null)
+    }
+  }
+
+  async function acknowledgeAll() {
+    setAckingAll(true)
+    try {
+      await fetch('/api/alerts/acknowledge-all', { method: 'POST' })
+      refresh()
+    } finally {
+      setAckingAll(false)
+    }
+  }
+
+  const alerts  = data?.alerts ?? []
+  const visible = filter === 'pending' ? alerts.filter(a => !a.acknowledged) : alerts
+  const stats   = data?.stats ?? {}
+
+  return (
+    <div className="space-y-6">
+      {/* header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-white text-xl font-bold tracking-tight flex items-center gap-2">
+            <Bell size={20} className="text-orange-400" />
+            Production Alerts
+          </h1>
+          <p className="text-white/35 text-sm mt-1">
+            Drift, retraining failures, DLQ spikes · auto-refresh 15s
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {(stats.pending ?? 0) > 0 && (
+            <button
+              onClick={acknowledgeAll}
+              disabled={ackingAll}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-emerald-500/30
+                         bg-emerald-500/8 text-emerald-300 text-sm hover:bg-emerald-500/15
+                         hover:border-emerald-500/50 transition-colors disabled:opacity-50">
+              <Check size={14} />
+              {ackingAll ? 'Clearing…' : `Ack All (${stats.pending})`}
+            </button>
+          )}
+          <button onClick={refresh}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-white/10
+                       bg-white/[0.03] text-white/60 text-sm hover:text-white hover:border-white/20 transition-colors">
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="rounded-xl border border-red-500/25 bg-red-500/8 px-4 py-3 text-red-300 text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* stats row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatTile label="Total" value={stats.total ?? 0} color="#fff" />
+        <StatTile label="Pending" value={stats.pending ?? 0} color="#f59e0b" />
+        <StatTile label="Critical" value={stats.by_severity?.critical ?? 0} color="#e11d48" />
+        <StatTile label="Warning"  value={stats.by_severity?.warning  ?? 0} color="#f59e0b" />
+      </div>
+
+      {/* filter tabs */}
+      <div className="flex gap-1 p-1 rounded-xl bg-white/[0.04] w-fit border border-white/[0.06]">
+        {['all', 'pending'].map(f => (
+          <button key={f} onClick={() => setFilter(f)}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+              filter === f
+                ? 'bg-white/10 text-white'
+                : 'text-white/40 hover:text-white/60'
+            }`}>
+            {f === 'all' ? `All (${alerts.length})` : `Pending (${alerts.filter(a => !a.acknowledged).length})`}
+          </button>
+        ))}
+      </div>
+
+      {/* alert list */}
+      {loading && !data && <Skeleton />}
+
+      {visible.length === 0 && !loading && (
+        <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-10 text-center">
+          <p className="text-white/50 text-sm">
+            {filter === 'pending' ? 'No pending alerts.' : 'No alerts yet.'}
+          </p>
+          <p className="text-white/25 text-xs mt-1">
+            Alerts are generated by drift checks and retraining gate failures.
+          </p>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {visible.map(alert => {
+          const sev = SEV_CFG[alert.severity] ?? SEV_CFG.info
+          const Icon = sev.icon
+          return (
+            <div key={alert.id}
+                 className={`rounded-2xl border p-5 transition-all ${
+                   alert.acknowledged ? 'opacity-45' : ''
+                 }`}
+                 style={{ background: sev.bg, borderColor: sev.border }}>
+              <div className="flex items-start gap-3">
+                <Icon size={16} style={{ color: sev.color }} className="mt-0.5 shrink-0" />
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full"
+                          style={{ color: sev.color, background: 'rgba(255,255,255,0.08)' }}>
+                      {sev.label.toUpperCase()}
+                    </span>
+                    <span className="text-white/70 text-sm font-mono font-medium">
+                      {alert.type}
+                    </span>
+                    {alert.acknowledged && (
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10
+                                       text-emerald-400 border border-emerald-500/20">
+                        Acknowledged
+                      </span>
+                    )}
+                    <span className="ml-auto text-white/30 text-xs shrink-0">
+                      {timeAgo(alert.timestamp)}
+                    </span>
+                  </div>
+
+                  <p className="text-white/75 text-sm mt-2 leading-relaxed">{alert.message}</p>
+
+                  {/* details preview */}
+                  {alert.details && Object.keys(alert.details).length > 0 && (
+                    <details className="mt-2 group">
+                      <summary className="text-white/30 text-xs cursor-pointer hover:text-white/50
+                                          list-none flex items-center gap-1">
+                        <span className="group-open:hidden">▶ details</span>
+                        <span className="hidden group-open:block">▼ details</span>
+                      </summary>
+                      <pre className="mt-2 text-[11px] font-mono text-white/40 bg-black/30
+                                      rounded-lg p-3 overflow-x-auto leading-relaxed">
+                        {JSON.stringify(alert.details, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+
+                {!alert.acknowledged && (
+                  <button
+                    onClick={() => acknowledge(alert.id)}
+                    disabled={acking === alert.id}
+                    className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg
+                               border border-white/15 bg-white/5 text-white/50 text-xs
+                               hover:text-white hover:border-white/30 transition-colors">
+                    <Check size={12} />
+                    {acking === alert.id ? 'Acking…' : 'Ack'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {lastFetch && (
+        <p className="text-white/20 text-xs text-center">
+          Last updated {lastFetch.toLocaleTimeString()}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function StatTile({ label, value, color }) {
+  return (
+    <div className="rounded-2xl border border-white/8 bg-[#0f0f14] p-4">
+      <p className="text-white/40 text-xs mb-1">{label}</p>
+      <p className="text-2xl font-bold" style={{ color }}>{value}</p>
+    </div>
+  )
+}
+
+function Skeleton() {
+  return (
+    <div className="space-y-3 animate-pulse">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="h-24 rounded-2xl bg-white/5" />
+      ))}
+    </div>
+  )
+}

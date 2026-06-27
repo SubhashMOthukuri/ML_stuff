@@ -38,6 +38,8 @@ LOG_TRANSFORM_COLS = [
     'minimum_nights_avg_ntm',
     'accommodates',
     'bedrooms',
+    'bathrooms',
+    'amenity_count',
 ]
 
 # Polynomial degree-2 on these (non-linear price relationship expected)
@@ -65,7 +67,10 @@ INTERACTION_PAIRS = [
 
 # Columns to drop from raw data before output (redundant with kept columns)
 DROP_REDUNDANT_COLS = [
-    'minimum_minimum_nights',   # corr=1.0 with minimum_nights
+    'minimum_minimum_nights',          # corr=1.0 with minimum_nights
+    'neighbourhood_group_cleansed',    # replaced by borough_* dummies
+    # neighbourhood_cleansed is KEPT — target encoding done in training script
+    # to avoid data leakage (train-only means applied to test)
 ]
 
 # Ratio features (price-relevant relationships)
@@ -162,6 +167,42 @@ def apply_log_transforms(df):
 
     logger.info(f"\n   Created {len(created)} log features")
     logger.info(f"\n   Top 5 rows (log features only):")
+    logger.info("\n" + df[created].head().to_string())
+    return df, created
+
+
+# ============================================================================
+# STEP 3.5 — NEIGHBOURHOOD ENCODING
+# Must run AFTER log transforms (needs log_price for target encoding)
+# ============================================================================
+
+def encode_neighbourhood(df):
+    logger.info("\n" + "=" * 80)
+    logger.info("STEP 3.5 — NEIGHBOURHOOD ENCODING")
+    logger.info("=" * 80)
+
+    df = df.copy()
+    created = []
+
+    # --- Borough one-hot (5 values → 4 dummies; Bronx = reference category) ---
+    if 'neighbourhood_group_cleansed' in df.columns:
+        dummies = pd.get_dummies(df['neighbourhood_group_cleansed'], prefix='borough')
+        if 'borough_Bronx' in dummies.columns:
+            dummies = dummies.drop(columns=['borough_Bronx'])
+        df = pd.concat([df, dummies], axis=1)
+        created.extend(dummies.columns.tolist())
+
+        logger.info(f"\n   Borough dummies created:")
+        for col in dummies.columns:
+            cnt = int(dummies[col].sum())
+            logger.info(f"      {col:<35}: {cnt:,} listings")
+
+    logger.info(f"\n   neighbourhood_cleansed kept as string column")
+    logger.info(f"   Target encoding (mean log_price per neighbourhood) done in training")
+    logger.info(f"   script on training data only — prevents data leakage into test set")
+
+    logger.info(f"\n   Created {len(created)} neighbourhood features")
+    logger.info(f"\n   Top 5 rows (neighbourhood features only):")
     logger.info("\n" + df[created].head().to_string())
     return df, created
 
@@ -343,11 +384,12 @@ def main():
 
     dist_report              = analyse_distributions(df)
     df, log_cols             = apply_log_transforms(df)
+    df, neighbourhood_cols   = encode_neighbourhood(df)
     df, poly_cols            = create_polynomial_features(df)
     df, interaction_cols     = create_interaction_features(df)
     df, ratio_cols           = create_ratio_features(df)
 
-    all_new_cols = log_cols + poly_cols + interaction_cols + ratio_cols
+    all_new_cols = log_cols + neighbourhood_cols + poly_cols + interaction_cols + ratio_cols
 
     # Drop redundant raw columns before output
     dropped = [c for c in DROP_REDUNDANT_COLS if c in df.columns]
@@ -369,6 +411,7 @@ INPUT  : clean_listings.csv      ({len(original_cols)} features)
 OUTPUT : engineered_features.csv ({df.shape[1]} features)
 
   Log transforms    : {len(log_cols)}
+  Neighbourhood enc : {len(neighbourhood_cols)}
   Polynomial (deg2) : {len(poly_cols)}
   Interaction terms : {len(interaction_cols)}
   Ratio features    : {len(ratio_cols)}

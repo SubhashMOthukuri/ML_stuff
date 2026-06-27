@@ -41,7 +41,7 @@ try:
     model.eval()
     print(f"✓ RoBERTa model loaded successfully!")
 except Exception as e:
-    print(f"❌ Error loading model: {e}")
+    print(f"Error loading model: {e}")
     print("Installing transformers...")
     import subprocess
     subprocess.check_call(["pip", "install", "transformers", "torch"])

@@ -12,3 +12,12 @@ venv/
 .env
 models/
 data/
+
+# SSL certs — generate locally, never commit private keys
+nginx/certs/*.key
+nginx/certs/*.crt
+
+# Runtime state files
+models/nyc/alerts.json
+data/predictions.db
+data/shadow_comparisons.db
