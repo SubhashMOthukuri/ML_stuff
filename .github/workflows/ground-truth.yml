@@ -1,0 +1,32 @@
+name: Monthly Ground Truth Ingestion
+
+on:
+  schedule:
+    - cron: '0 6 1 * *'      # 6 AM UTC, 1st of each month — after InsideAirbnb publishes a fresh snapshot
+  workflow_dispatch:          # allow manual trigger from GitHub UI
+    inputs:
+      dry_run:
+        description: 'Match and log only, no DB writes'
+        required: false
+        default: 'false'
+
+jobs:
+  ingest:
+    name: Trigger Ground Truth Ingest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /ground-truth/ingest on production
+        run: |
+          curl -sf -X POST "${PROD_API_URL}/ground-truth/ingest?dry_run=${{ github.event.inputs.dry_run == 'true' }}" \
+            -H "X-Ingest-Token: ${INGEST_TOKEN}" \
+            -o response.json -w "HTTP %{http_code}\n"
+          cat response.json
+        env:
+          PROD_API_URL: ${{ secrets.PROD_API_URL }}
+          INGEST_TOKEN: ${{ secrets.GROUND_TRUTH_INGEST_TOKEN }}
+
+      - name: Upload ingest result
+        uses: actions/upload-artifact@v4
+        with:
+          name: ground-truth-ingest-result
+          path: response.json

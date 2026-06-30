@@ -24,6 +24,8 @@ Environment variables:
   CACHE_TTL_SECONDS   Cache entry lifetime         (default: 300)
   PREDICTION_DB       SQLite path or Postgres DSN  (default: data/predictions.db)
   DLQ_MAX_SIZE        Max DLQ entries in Redis     (default: 10000)
+  VALID_API_KEYS              Comma-separated valid API keys for X-API-Key auth (default: unset → auth disabled)
+  GROUND_TRUTH_INGEST_TOKEN  Shared secret for POST /ground-truth/ingest (default: unset → endpoint disabled)
 """
 
 import logging
@@ -31,11 +33,14 @@ import sys
 import os
 import time
 import uuid
+
+import structlog
+from structlog.contextvars import clear_contextvars, bind_contextvars
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -60,9 +65,12 @@ from src.new_york_workflow.nyc_drift import DriftMonitor
 from src.new_york_workflow.nyc_alerts import alerts as alert_store
 from src.new_york_workflow.nyc_shadow import ShadowPredictor
 from src.new_york_workflow.nyc_ground_truth import GroundTruthStore
+from src.new_york_workflow.nyc_ab import ABTest
+from src.new_york_workflow.nyc_canary import CanaryDeployment
+from scripts.fetch_ground_truth import run as run_ground_truth_ingest, INSIDEAIRBNB_URL
 
 setup_logging()
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ── OpenTelemetry ─────────────────────────────────────────────────────────────
 
@@ -86,6 +94,27 @@ tracer = _setup_tracing()
 RATE_LIMIT = os.getenv("RATE_LIMIT", "60/minute")
 limiter    = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT])
 
+# ── API key auth ──────────────────────────────────────────────────────────────
+# VALID_API_KEYS: comma-separated list. Empty = auth disabled (dev/local default).
+# Key rotation: add new key to the list, deploy, then remove old key + deploy again.
+# Exempt paths: health probes (needed by Docker), docs, root (discovery).
+
+_raw_keys = os.getenv("VALID_API_KEYS", "")
+VALID_API_KEYS: frozenset[str] = frozenset(k.strip() for k in _raw_keys.split(",") if k.strip())
+
+_AUTH_EXEMPT_PREFIXES = ("/health", "/docs", "/openapi.json", "/redoc", "/")
+
+
+# ── admin auth (gates /ground-truth/ingest — downloads external data + writes DB) ──
+
+GROUND_TRUTH_INGEST_TOKEN = os.getenv("GROUND_TRUTH_INGEST_TOKEN")
+
+def _verify_ingest_token(x_ingest_token: Optional[str] = Header(None)) -> None:
+    if not GROUND_TRUTH_INGEST_TOKEN:
+        raise HTTPException(status_code=503, detail="GROUND_TRUTH_INGEST_TOKEN not configured on server")
+    if x_ingest_token != GROUND_TRUTH_INGEST_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Ingest-Token header")
+
 # ── singletons (populated at startup) ────────────────────────────────────────
 
 predictor:    NYCAirbnbPredictorONNX = None
@@ -95,12 +124,14 @@ dlq:          DeadLetterQueue        = None
 drift:        DriftMonitor           = None
 shadow:       ShadowPredictor        = None
 ground_truth: GroundTruthStore       = None
+ab_test:      ABTest                 = None
+canary:       CanaryDeployment       = None
 _r2_test:     float                  = 0.0
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global predictor, cache, store, dlq, drift, shadow, ground_truth, _r2_test
+    global predictor, cache, store, dlq, drift, shadow, ground_truth, ab_test, canary, _r2_test
 
     logger.info("Startup — initialising services")
     predictor    = NYCAirbnbPredictorONNX()
@@ -110,17 +141,22 @@ async def lifespan(app: FastAPI):
     drift        = DriftMonitor()
     shadow       = ShadowPredictor()
     ground_truth = GroundTruthStore()
+    ab_test      = ABTest()
+    canary       = CanaryDeployment()
     shadow.inject_champion(predictor)   # share _engineer() + feature_list + scaler
+    canary.inject(shadow)               # share shadow predictor for challenger inference
 
     info     = predictor.model_info()
     _r2_test = info["r2_test"] or 0.0
     logger.info(
-        "Ready | backend=%s  R²=%.4f  cache=%s  store=%s  dlq=%s  shadow=%s",
+        "Ready | backend=%s  R²=%.4f  cache=%s  store=%s  dlq=%s  shadow=%s  ab=%s  canary=%s",
         info["inference_backend"], info["r2_test"],
         "redis" if cache._client else "disabled",
         store._path,
         "redis" if dlq._client else "in-memory",
         "active" if shadow.active else "disabled",
+        f"active({ab_test.test_id})" if ab_test.active else "idle",
+        f"active({canary.current_pct}%)" if canary.active else "idle",
     )
     yield
     logger.info("Shutdown")
@@ -150,6 +186,7 @@ FastAPIInstrumentor.instrument_app(app)
 
 
 # ── middleware: request ID + latency + DLQ on 5xx ────────────────────────────
+# Registered first → innermost → runs AFTER api_key_auth rejects or passes through.
 
 @app.middleware("http")
 async def observe(request: Request, call_next) -> Response:
@@ -184,6 +221,48 @@ async def observe(request: Request, call_next) -> Response:
 
     response.headers["X-Request-ID"] = request_id
     return response
+
+
+# ── middleware: API key auth ──────────────────────────────────────────────────
+# Registered AFTER observe → middle layer (LIFO stack).
+# Unauthenticated requests short-circuit here; observe never records them.
+
+@app.middleware("http")
+async def api_key_auth(request: Request, call_next) -> Response:
+    path = request.url.path
+    exempt = (
+        not VALID_API_KEYS
+        or path == "/"
+        or path.startswith("/health")
+        or path.startswith("/docs")
+        or path.startswith("/openapi")
+        or path.startswith("/redoc")
+    )
+    if exempt:
+        return await call_next(request)
+    if request.headers.get("X-API-Key", "") not in VALID_API_KEYS:
+        return Response(
+            content='{"detail":"Invalid or missing X-API-Key header"}',
+            status_code=401,
+            media_type="application/json",
+        )
+    return await call_next(request)
+
+
+# ── middleware: structured log context ────────────────────────────────────────
+# Registered LAST → outermost (LIFO stack) → runs FIRST on every request.
+# Binds trace_id / method / path into structlog contextvars so every log line
+# emitted during the request automatically carries these fields.
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next) -> Response:
+    clear_contextvars()
+    bind_contextvars(
+        trace_id=request.headers.get("X-Trace-Id", str(uuid.uuid4())[:8]),
+        method=request.method,
+        path=request.url.path,
+    )
+    return await call_next(request)
 
 
 # ── schemas ───────────────────────────────────────────────────────────────────
@@ -449,6 +528,24 @@ def ground_truth_stats():
     }
 
 
+@app.post("/ground-truth/ingest", dependencies=[Depends(_verify_ingest_token)])
+def ground_truth_ingest(url: str = INSIDEAIRBNB_URL, dry_run: bool = False):
+    """
+    Trigger scripts/fetch_ground_truth.py against the live predictions DB this
+    API instance is running against — no SSH/file-copy needed to reach prod data.
+
+    Requires header: X-Ingest-Token: <GROUND_TRUTH_INGEST_TOKEN>
+    Intended caller: a scheduled GitHub Actions job (monthly, after InsideAirbnb
+    publishes a fresh snapshot). See .github/workflows/ground-truth.yml.
+    """
+    try:
+        result = run_ground_truth_ingest(url=url, dry_run=dry_run)
+    except Exception as e:
+        logger.error("Ground truth ingest failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Ingest failed: {e}")
+    return result
+
+
 @app.get("/alerts")
 def get_alerts(pending_only: bool = False, limit: int = 50):
     """
@@ -509,6 +606,7 @@ def predict(listing: ListingFeatures, request: Request):
             )
 
         # ── 2. ONNX inference ─────────────────────────────────────────────
+        _infer_t0 = time.perf_counter()
         try:
             result = predictor.predict_raw(raw)
         except ValueError as exc:
@@ -518,7 +616,6 @@ def predict(listing: ListingFeatures, request: Request):
         except Exception as exc:
             span.set_attribute("error", str(exc))
             logger.error("Inference error rid=%s: %s", request_id[:8], exc, exc_info=True)
-            # Push full payload to DLQ so we can retry or alert
             dlq.push(
                 payload     = raw,
                 error       = str(exc),
@@ -526,25 +623,74 @@ def predict(listing: ListingFeatures, request: Request):
                 request_id  = request_id,
                 status_code = 500,
             )
+            canary.record_post_promotion((time.perf_counter() - _infer_t0) * 1000, success=False)
             raise HTTPException(status_code=500, detail=str(exc))
+
+        _infer_ms = (time.perf_counter() - _infer_t0) * 1000
 
         # ── 3. write-through: cache + store ───────────────────────────────
         cache.set(raw, result)
         store.log_prediction(request_id, raw, result, cache_hit=False, listing_id=listing_id)
         metrics.record_prediction(result["price_usd"])
 
-        # ── 4. shadow: run challenger alongside champion (fire-and-forget) ────
-        shadow.run_async(
-            raw           = raw,
-            champion_price = result["price_usd"],
-            request_id    = request_id,
-            borough       = listing.borough,
-            room_type     = listing.room_type,
-        )
+        # ── 4. routing: canary → A/B → shadow (priority order) ──────────────
+        # Canary and A/B show challenger output to real users.
+        # Shadow runs challenger hidden (fire-and-forget) as a fallback.
+        # Cache hits always serve champion — only cache misses are routed.
+        routed_arm = "champion"
+
+        if canary.active:
+            routed_arm = canary.route(request_id)
+            t0 = time.time()
+            if routed_arm == "challenger":
+                chal = shadow.predict_sync(raw)
+                latency_ms = (time.time() - t0) * 1000
+                if chal:
+                    result = chal
+                    canary.record_result("challenger", latency_ms, success=True)
+                else:
+                    canary.record_result("challenger", latency_ms, success=False)
+                    routed_arm = "champion"   # fallback
+            else:
+                canary.record_result("champion", (time.time() - t0) * 1000, success=True)
+
+        elif ab_test.active:
+            routed_arm = ab_test.route(request_id)
+            if routed_arm == "challenger":
+                chal = shadow.predict_sync(raw)
+                if chal:
+                    result = chal
+                else:
+                    routed_arm = "champion"   # fallback; log as champion
+            ab_test.log_prediction(
+                request_id      = request_id,
+                listing_id      = listing_id,
+                arm             = routed_arm,
+                predicted_price = result["price_usd"],
+                borough         = listing.borough,
+                room_type       = listing.room_type,
+            )
+
+        else:
+            # Shadow: challenger runs hidden, champion result served to user
+            shadow.run_async(
+                raw            = raw,
+                champion_price = result["price_usd"],
+                request_id     = request_id,
+                borough        = listing.borough,
+                room_type      = listing.room_type,
+            )
+
+        # ── 5. post-promotion monitoring ──────────────────────────────────
+        # After canary promotes challenger → champion, the monitor watches the
+        # new model's error rate for POST_PROMOTION_WINDOW_S seconds. If error
+        # rate jumps 3× the canary baseline, it auto-reverts files + alerts.
+        canary.record_post_promotion(_infer_ms, success=True)
 
         span.set_attribute("cache.hit",            False)
         span.set_attribute("prediction.price_usd", result["price_usd"])
         span.set_attribute("shadow.active",        shadow.active)
+        span.set_attribute("routed_arm",           routed_arm)
         logger.info(
             "predict | rid=%s MISS %s %s %.1fbed → %s",
             request_id[:8], listing.borough, listing.room_type,
@@ -642,6 +788,130 @@ def shadow_clear():
     """Delete all shadow comparison rows from the database."""
     deleted = shadow.clear_comparisons()
     return {"deleted": deleted}
+
+
+# ── A/B test ──────────────────────────────────────────────────────────────────
+
+@app.post("/ab/start")
+def ab_start(split_pct: float = 20):
+    """
+    Start an A/B test: route `split_pct`% of non-cached traffic to the challenger.
+    Users in the challenger arm see the challenger's price — unlike shadow, which
+    keeps the challenger hidden.
+
+    Ground truth (actual prices from InsideAirbnb) accumulates over days via
+    scripts/fetch_ground_truth.py. Use GET /ab/stats to see per-arm MAE.
+
+    split_pct must be 1–50 (capped to limit user exposure while testing).
+    Requires challenger.onnx to exist (run retrain.py first).
+    """
+    if not shadow.active:
+        raise HTTPException(
+            status_code=400,
+            detail="Challenger not loaded — challenger.onnx missing or shadow not active. Run retrain.py first.",
+        )
+    result = ab_test.start(split_pct=split_pct)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.get("/ab/stats")
+def ab_stats():
+    """
+    Per-arm accuracy comparison for the current (or most recent) A/B test.
+
+    Uses ground truth JOIN: ab_predictions ⟕ ground_truth on listing_id.
+    Ground truth only matches predictions that included listing_id and whose
+    listing has since been scraped by scripts/fetch_ground_truth.py.
+
+    Returns MAE per arm + recommendation: promote | monitor | reject | insufficient_data.
+    """
+    return ab_test.stats()
+
+
+@app.post("/ab/stop")
+def ab_stop():
+    """Stop the A/B test. Champion serves 100% of traffic. Challenger stays on disk."""
+    result = ab_test.stop()
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result.get("error", "Not active"))
+    return result
+
+
+@app.post("/ab/promote")
+def ab_promote():
+    """
+    Stop the A/B test and move to canary deployment.
+    Call POST /canary/start after this to begin the gradual rollout.
+    """
+    return ab_test.promote()
+
+
+@app.post("/ab/reject")
+def ab_reject():
+    """
+    Stop the A/B test without promoting the challenger.
+    Use POST /shadow/reject afterwards to delete challenger.onnx.
+    """
+    return ab_test.reject()
+
+
+# ── Canary deployment ──────────────────────────────────────────────────────────
+
+@app.post("/canary/start")
+def canary_start():
+    """
+    Begin canary deployment: 1% of traffic → challenger.
+
+    A background health monitor checks error rate and p99 latency every 15s.
+    If healthy for 60s with 20+ samples, it auto-advances: 1% → 5% → 25% → 100%.
+    If unhealthy at any stage, it auto-rolls-back to champion.
+
+    At 100%, challenger.onnx is promoted to nyc_xgb_model.onnx automatically.
+    Restart the API ('docker compose restart api') to serve the promoted model.
+    """
+    result = canary.start()
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.get("/canary/status")
+def canary_status():
+    """
+    Current canary stage, health metrics, and event history.
+    Shows error rate and p99 latency for challenger at the current stage.
+    """
+    return canary.status()
+
+
+@app.post("/canary/advance")
+def canary_advance():
+    """
+    Manually advance to the next canary stage, skipping the health-wait.
+    At 100%, promotes challenger to champion and disables canary.
+    """
+    if not canary.active:
+        raise HTTPException(status_code=400, detail="Canary not active. POST /canary/start first.")
+    return canary.advance(manual=True)
+
+
+@app.post("/canary/rollback")
+def canary_rollback():
+    """
+    Immediately roll back to champion (0% canary traffic).
+    challenger.onnx is preserved on disk for inspection.
+    """
+    if not canary.active:
+        raise HTTPException(status_code=400, detail="Canary not active.")
+    return canary.rollback(reason="manual")
+
+
+@app.post("/canary/abort")
+def canary_abort():
+    """Stop the canary without rolling back or promoting. Equivalent to rollback."""
+    return canary.abort()
 
 
 if __name__ == "__main__":
