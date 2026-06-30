@@ -41,8 +41,6 @@ MONITOR_FEATURES = [
     "amenity_count",
 ]
 
-N_BINS = 10
-
 
 @dataclass
 class DriftReport:
@@ -164,7 +162,6 @@ class DriftMonitor:
     # ── private ───────────────────────────────────────────────────────────────
 
     def _load_recent(self, since_iso: str) -> list[dict]:
-        import json as _json
         if not self._db.exists():
             return []
         try:
@@ -179,10 +176,10 @@ class DriftMonitor:
             out = []
             for r in rows:
                 try:
-                    rec = _json.loads(r["features_json"])
+                    rec = json.loads(r["features_json"])
                     rec["_predicted_price"] = r["predicted_price"]
-                    rec["borough"]    = r["borough"] or rec.get("borough")
-                    rec["room_type"]  = r["room_type"] or rec.get("room_type")
+                    rec["borough"]   = r["borough"]   or rec.get("borough")
+                    rec["room_type"] = r["room_type"] or rec.get("room_type")
                     out.append(rec)
                 except Exception:
                     pass

@@ -10,6 +10,7 @@ On Mac M3   → ONNX Runtime (CoreML execution provider available)
 On Linux+GPU → swap to Triton with one config change
 """
 
+import json
 import pickle
 import logging
 import numpy as np
@@ -57,6 +58,9 @@ class NYCAirbnbPredictorONNX:
         self.neighbourhood_means = neigh_meta["means"]
         self.global_mean         = neigh_meta["global_mean"]
 
+        report_path = model_dir / "nyc_training_report.json"
+        self._report = json.loads(report_path.read_text()) if report_path.exists() else {}
+
         logger.info(
             "NYCAirbnbPredictorONNX ready | providers=%s features=%d neighbourhoods=%d",
             providers, len(self.feature_list), len(self.neighbourhood_means),
@@ -102,19 +106,17 @@ class NYCAirbnbPredictorONNX:
         return results
 
     def model_info(self) -> dict:
-        providers = self.session.get_providers()
+        xgb_test = self._report.get("models", {}).get("XGBoost", {}).get("test", {})
         return {
-            "model_type":          "XGBRegressor (ONNX Runtime)",
-            "inference_backend":   providers[0],
+            "model_type":           "XGBRegressor (ONNX Runtime)",
+            "inference_backend":    self.session.get_providers()[0],
             "onnx_runtime_version": rt.__version__,
-            "n_features":          len(self.feature_list),
-            "n_neighbourhoods":    len(self.neighbourhood_means),
-            "r2_test":             0.8241,
-            "mae_dollar":          57.62,
-            "mape_pct":            23.60,
-            "training_rows":       16388,
-            "triton_compatible":   True,
-            "price_cap_used":      "$1,562/night (top 1% excluded)",
+            "n_features":           len(self.feature_list),
+            "n_neighbourhoods":     len(self.neighbourhood_means),
+            "r2_test":              xgb_test.get("r2"),
+            "mae_dollar":           xgb_test.get("mae_dollar"),
+            "mape_pct":             xgb_test.get("mape"),   # report key is "mape"
+            "triton_compatible":    True,
         }
 
     # ── private ───────────────────────────────────────────────────────────────
