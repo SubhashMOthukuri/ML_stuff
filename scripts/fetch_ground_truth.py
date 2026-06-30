@@ -40,6 +40,7 @@ sys.path.insert(0, str(BASE_DIR))
 from src.new_york_workflow.nyc_store import RequestStore
 from src.new_york_workflow.nyc_ground_truth import GroundTruthStore
 from src.new_york_workflow.nyc_alerts import alerts
+from src.new_york_workflow.nyc_data_validator import validate_raw_snapshot, DataQualityError
 
 # Latest InsideAirbnb NYC listings snapshot (updated monthly)
 INSIDEAIRBNB_URL = (
@@ -91,6 +92,17 @@ def run(url: str, dry_run: bool = False) -> dict:
 
     # 2. Download InsideAirbnb snapshot
     df = fetch_snapshot(url)
+
+    # 2a. Validate snapshot schema before touching any data
+    report = validate_raw_snapshot(df)
+    if not report.passed:
+        alerts.push_once(
+            alert_type = "data_quality_failure",
+            message    = f"InsideAirbnb snapshot failed data quality gate: {report.errors[0]}",
+            severity   = "critical",
+            details    = {"stage": "raw_snapshot", "errors": report.errors},
+        )
+        report.raise_if_failed()
 
     # Normalise: id column → string, price → float
     df["id"] = df["id"].astype(str)

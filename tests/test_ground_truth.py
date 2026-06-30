@@ -344,7 +344,20 @@ class TestFetchGroundTruthRun:
     """
     Tests for run() using mocked HTTP and real temp SQLite stores.
     We patch fetch_snapshot so no network calls are made.
+
+    Data quality validation (validate_raw_snapshot) is bypassed here because
+    the tiny test snapshots intentionally don't meet production size/schema
+    requirements. That gate is covered by tests/test_data_validator.py.
     """
+
+    @pytest.fixture(autouse=True)
+    def _bypass_raw_validation(self, monkeypatch):
+        from src.new_york_workflow.nyc_data_validator import DataQualityReport
+        passing = DataQualityReport(stage="raw_snapshot", passed=True, row_count=99_999)
+        monkeypatch.setattr(
+            "scripts.fetch_ground_truth.validate_raw_snapshot",
+            lambda df: passing,
+        )
 
     def _make_snapshot(self, listing_ids: list, prices: list) -> pd.DataFrame:
         return pd.DataFrame({
