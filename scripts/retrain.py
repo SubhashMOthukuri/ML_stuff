@@ -55,6 +55,14 @@ from xgboost import XGBRegressor
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.new_york_workflow.nyc_data_validator import (
+    validate_raw_snapshot,
+    validate_clean_listings,
+    validate_engineered_features,
+    DataQualityError,
+)
+
 BASE_DIR   = Path(__file__).resolve().parents[1]
 DATA_DIR   = BASE_DIR / "data" / "airbnb"
 MODEL_DIR  = BASE_DIR / "models" / "nyc"
@@ -219,6 +227,9 @@ def clean_and_engineer(raw_path: Path) -> pd.DataFrame:
     df_raw = pd.read_csv(raw_path)
     logger.info("  Raw input:  %d rows × %d cols", *df_raw.shape)
 
+    # Gate 1: validate raw snapshot before touching any data
+    validate_raw_snapshot(df_raw).raise_if_failed()
+
     available = [col for col in c.KEEP_FEATURES if col in df_raw.columns]
     missing   = set(c.KEEP_FEATURES) - set(available)
     if missing:
@@ -229,6 +240,9 @@ def clean_and_engineer(raw_path: Path) -> pd.DataFrame:
     df = c.encode_categorical(df)
     df = c.handle_missing_values(df)
     logger.info("  After cleaning: %d rows × %d cols", *df.shape)
+
+    # Gate 2: validate cleaned data before feature engineering
+    validate_clean_listings(df).raise_if_failed()
 
     # ── Step 2: feature engineer ───────────────────────────────────────────────
     logger.info("=== FEATURE ENGINEERING ===")
@@ -270,6 +284,10 @@ def load_training_data(no_download: bool = False) -> pd.DataFrame:
     cap = df["price"].quantile(PRICE_CAP)
     df  = df[df["price"] <= cap].copy()
     logger.info("  %d rows after %.0f%% price cap ($%.0f)", len(df), PRICE_CAP * 100, cap)
+
+    # Gate 3: validate engineered features before training
+    validate_engineered_features(df).raise_if_failed()
+
     return df
 
 

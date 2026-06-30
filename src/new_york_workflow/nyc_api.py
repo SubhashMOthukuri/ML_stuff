@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
     shadow.inject_champion(predictor)   # share _engineer() + feature_list + scaler
 
     info     = predictor.model_info()
-    _r2_test = info["r2_test"]
+    _r2_test = info["r2_test"] or 0.0
     logger.info(
         "Ready | backend=%s  R²=%.4f  cache=%s  store=%s  dlq=%s  shadow=%s",
         info["inference_backend"], info["r2_test"],

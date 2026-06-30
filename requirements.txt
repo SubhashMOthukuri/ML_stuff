@@ -22,3 +22,5 @@ opentelemetry-instrumentation-fastapi>=0.44b0
 opentelemetry-exporter-otlp-proto-grpc>=1.23.0
 # ── MLflow experiment tracking & model registry ──────────────────────────────
 mlflow>=2.0.0
+# ── data quality validation ───────────────────────────────────────────────────
+pandera>=0.20.0
