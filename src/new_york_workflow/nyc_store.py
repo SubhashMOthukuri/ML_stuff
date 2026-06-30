@@ -55,9 +55,8 @@ CREATE INDEX IF NOT EXISTS idx_listing_id ON predictions(listing_id);
 
 class RequestStore:
 
-    _lock = threading.Lock()
-
     def __init__(self, db_path: Path = DB_PATH):
+        self._lock = threading.Lock()
         self._path = Path(db_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()

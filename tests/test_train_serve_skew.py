@@ -27,7 +27,7 @@ _fe_spec = importlib.util.spec_from_file_location("feature_engineering", _FE_PAT
 fe = importlib.util.module_from_spec(_fe_spec)
 _fe_spec.loader.exec_module(fe)
 
-from src.new_york_workflow.nyc_predictor_onnx import NYCAirbnbPredictorONNX, MIDTOWN_LAT, MIDTOWN_LON
+from src.new_york_workflow.nyc_predictor_onnx import NYCAirbnbPredictorONNX
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,59 +48,27 @@ def _make_predictor():
 
 def _training_features(raw: dict) -> dict:
     """
-    Replicate what the training pipeline produces for a single row.
+    Run a single raw listing through the actual training pipeline functions.
 
-    Uses the actual functions from 2_feature_engineering.py so any edit
-    to the training path is automatically reflected here.
+    Calls the real fe.* functions so any formula or constant change in the
+    training scripts is automatically reflected — no manual duplication.
     """
-    # The training CSV has 'neighbourhood_group_cleansed' for borough
     df = pd.DataFrame([{**raw, "neighbourhood_group_cleansed": raw["borough"]}])
 
-    # Step 3 — log transforms (skip 'price' — not present at serving time)
-    for col in fe.LOG_TRANSFORM_COLS:
-        if col in df.columns and col != "price":
-            df[f"log_{col}"] = np.log1p(df[col])
-
-    # Step 3.5 — borough one-hot (drops Bronx as reference category)
-    # Force all categories so a single-row DataFrame produces all 4 dummy columns
-    # (the full training data has all boroughs, but a test fixture may not)
+    # Force all borough categories so a single-row DataFrame produces all 4
+    # dummy columns (the full training set has all boroughs; a test row may not)
     borough_cats = pd.CategoricalDtype(
         categories=["Bronx", "Brooklyn", "Manhattan", "Queens", "Staten Island"],
         ordered=False,
     )
     df["neighbourhood_group_cleansed"] = df["neighbourhood_group_cleansed"].astype(borough_cats)
-    dummies = pd.get_dummies(df["neighbourhood_group_cleansed"], prefix="borough")
-    if "borough_Bronx" in dummies.columns:
-        dummies = dummies.drop(columns=["borough_Bronx"])
-    df = pd.concat([df, dummies], axis=1)
 
-    # Step 4 — polynomial
-    for col in fe.POLY_COLS:
-        df[f"{col}_sq"] = df[col] ** 2
-
-    # Step 5 — interactions
-    for col_a, col_b in fe.INTERACTION_PAIRS:
-        df[f"{col_a}_x_{col_b}"] = df[col_a] * df[col_b]
-
-    # Step 6 — ratios
-    for name, num, denom in [
-        ("reviews_per_bedroom",      "number_of_reviews", "bedrooms"),
-        ("reviews_per_accommodates", "number_of_reviews", "accommodates"),
-        ("host_density",             "host_listings_count", "accommodates"),
-    ]:
-        df[name] = df[num] / df[denom].replace(0, 1)
-
-    reviewed = df[fe.REVIEW_SCORE_COLS].sum(axis=1) > 0
-    df["review_score_std"] = np.where(
-        reviewed,
-        df[fe.REVIEW_SCORE_COLS].std(axis=1),   # pandas default: ddof=1
-        0.0,
-    )
-
-    df["dist_from_midtown"] = np.sqrt(
-        (df["latitude"]  - MIDTOWN_LAT) ** 2 +
-        (df["longitude"] - MIDTOWN_LON) ** 2
-    ) * 111
+    # Call the actual training functions in pipeline order
+    df, _ = fe.apply_log_transforms(df)
+    df, _ = fe.encode_neighbourhood(df)
+    df, _ = fe.create_polynomial_features(df)
+    df, _ = fe.create_interaction_features(df)
+    df, _ = fe.create_ratio_features(df)
 
     return df.iloc[0].to_dict()
 
