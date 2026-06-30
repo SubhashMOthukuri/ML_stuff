@@ -59,6 +59,7 @@ from src.new_york_workflow.nyc_dlq import DeadLetterQueue
 from src.new_york_workflow.nyc_drift import DriftMonitor
 from src.new_york_workflow.nyc_alerts import alerts as alert_store
 from src.new_york_workflow.nyc_shadow import ShadowPredictor
+from src.new_york_workflow.nyc_ground_truth import GroundTruthStore
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -87,25 +88,27 @@ limiter    = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT])
 
 # ── singletons (populated at startup) ────────────────────────────────────────
 
-predictor: NYCAirbnbPredictorONNX = None
-cache:     PredictionCache        = None
-store:     RequestStore           = None
-dlq:       DeadLetterQueue        = None
-drift:     DriftMonitor           = None
-shadow:    ShadowPredictor        = None
+predictor:    NYCAirbnbPredictorONNX = None
+cache:        PredictionCache        = None
+store:        RequestStore           = None
+dlq:          DeadLetterQueue        = None
+drift:        DriftMonitor           = None
+shadow:       ShadowPredictor        = None
+ground_truth: GroundTruthStore       = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global predictor, cache, store, dlq, drift, shadow
+    global predictor, cache, store, dlq, drift, shadow, ground_truth
 
     logger.info("Startup — initialising services")
-    predictor = NYCAirbnbPredictorONNX()
-    cache      = PredictionCache()
-    store      = RequestStore()
-    dlq        = DeadLetterQueue()
-    drift      = DriftMonitor()
-    shadow     = ShadowPredictor()
+    predictor    = NYCAirbnbPredictorONNX()
+    cache        = PredictionCache()
+    store        = RequestStore()
+    dlq          = DeadLetterQueue()
+    drift        = DriftMonitor()
+    shadow       = ShadowPredictor()
+    ground_truth = GroundTruthStore()
     shadow.inject_champion(predictor)   # share _engineer() + feature_list + scaler
 
     info = predictor.model_info()
@@ -184,6 +187,7 @@ async def observe(request: Request, call_next) -> Response:
 # ── schemas ───────────────────────────────────────────────────────────────────
 
 class ListingFeatures(BaseModel):
+    listing_id:                  Optional[str] = Field(None, description="InsideAirbnb listing ID — enables ground truth feedback loop")
     accommodates:                int   = Field(..., ge=1, le=16)
     bedrooms:                    float = Field(1.0, ge=0, le=20)
     bathrooms:                   float = Field(1.0, ge=0, le=20)
@@ -414,6 +418,34 @@ def drift_check(window_hours: int = 168, push_alert: bool = False):
     return report.to_dict()
 
 
+@app.get("/ground-truth/stats")
+def ground_truth_stats():
+    """
+    Production accuracy measured against real InsideAirbnb prices.
+    Populated by scripts/fetch_ground_truth.py (run monthly after each snapshot).
+    """
+    stats = ground_truth.stats()
+    recent = ground_truth.recent(n=10)
+    dist   = ground_truth.error_distribution()
+
+    baseline_mae = None
+    try:
+        import json as _json
+        bp = _ROOT / "models" / "nyc" / "baseline_stats.json"
+        if bp.exists():
+            baseline_mae = _json.loads(bp.read_text()).get("model_metrics", {}).get("mae_dollar")
+    except Exception:
+        pass
+
+    return {
+        "stats":            stats,
+        "baseline_mae":     baseline_mae,
+        "mae_drift":        round(stats["mae_dollar"] - baseline_mae, 2) if stats["mae_dollar"] and baseline_mae else None,
+        "error_distribution": dist,
+        "recent":           recent,
+    }
+
+
 @app.get("/alerts")
 def get_alerts(pending_only: bool = False, limit: int = 50):
     """
@@ -448,18 +480,21 @@ def predict(listing: ListingFeatures, request: Request):
     Full request payload is logged to SQLite for retraining. 5xx pushes to DLQ.
     """
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-    raw        = listing.model_dump()
+    listing_id = listing.listing_id
+    raw        = listing.model_dump(exclude={"listing_id"})
 
     with tracer.start_as_current_span("predict") as span:
         span.set_attribute("listing.borough",      listing.borough)
         span.set_attribute("listing.room_type",    listing.room_type)
         span.set_attribute("listing.accommodates", listing.accommodates)
+        if listing_id:
+            span.set_attribute("listing.id", listing_id)
 
         # ── 1. cache lookup ───────────────────────────────────────────────
         cached = cache.get(raw)
         if cached:
             span.set_attribute("cache.hit", True)
-            store.log_prediction(request_id, raw, cached, cache_hit=True)
+            store.log_prediction(request_id, raw, cached, cache_hit=True, listing_id=listing_id)
             metrics.record_prediction(cached["price_usd"])
             logger.info("predict | rid=%s CACHE HIT %s → %s", request_id[:8], listing.borough, cached["price_str"])
             return PredictionResponse(
@@ -492,7 +527,7 @@ def predict(listing: ListingFeatures, request: Request):
 
         # ── 3. write-through: cache + store ───────────────────────────────
         cache.set(raw, result)
-        store.log_prediction(request_id, raw, result, cache_hit=False)
+        store.log_prediction(request_id, raw, result, cache_hit=False, listing_id=listing_id)
         metrics.record_prediction(result["price_usd"])
 
         # ── 4. shadow: run challenger alongside champion (fire-and-forget) ────
