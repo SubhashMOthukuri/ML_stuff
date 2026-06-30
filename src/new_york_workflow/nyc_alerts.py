@@ -33,14 +33,10 @@ class AlertStore:
         except Exception:
             return []
 
-    def push(self, alert_type: str, message: str, severity: str = "warning",
-             details: dict | None = None) -> str:
-        """
-        severity: 'info' | 'warning' | 'critical'
-        Returns the alert ID.
-        """
+    @staticmethod
+    def _build_entry(alert_type: str, message: str, severity: str, details: dict | None) -> tuple[str, dict]:
         alert_id = str(uuid.uuid4())[:8]
-        entry = {
+        return alert_id, {
             "id":           alert_id,
             "timestamp":    datetime.now(timezone.utc).isoformat(),
             "type":         alert_type,
@@ -49,6 +45,10 @@ class AlertStore:
             "details":      details or {},
             "acknowledged": False,
         }
+
+    def push(self, alert_type: str, message: str, severity: str = "warning",
+             details: dict | None = None) -> str:
+        alert_id, entry = self._build_entry(alert_type, message, severity, details)
         with self._lock:
             alerts = self._read()
             alerts.append(entry)
@@ -58,28 +58,12 @@ class AlertStore:
 
     def push_once(self, alert_type: str, message: str, severity: str = "warning",
                   details: dict | None = None) -> str | None:
-        """
-        Atomic deduplicated push: only creates the alert if no unacknowledged alert
-        of the same type already exists. Read + check + write all happen under a
-        single lock acquisition, preventing the race condition where two concurrent
-        requests both see an empty pending list and both push.
-
-        Returns the alert ID if pushed, None if suppressed as a duplicate.
-        """
-        alert_id = str(uuid.uuid4())[:8]
-        entry = {
-            "id":           alert_id,
-            "timestamp":    datetime.now(timezone.utc).isoformat(),
-            "type":         alert_type,
-            "severity":     severity,
-            "message":      message,
-            "details":      details or {},
-            "acknowledged": False,
-        }
+        """Atomic deduplicated push — suppresses if an unacknowledged alert of the same type exists."""
+        alert_id, entry = self._build_entry(alert_type, message, severity, details)
         with self._lock:
             alerts = self._read()
             if any(not a["acknowledged"] and a["type"] == alert_type for a in alerts):
-                return None   # duplicate — already pending
+                return None
             alerts.append(entry)
             self._path.write_text(json.dumps(alerts[-500:], indent=2))
         logger.warning("ALERT [%s] %s: %s", severity.upper(), alert_type, message)

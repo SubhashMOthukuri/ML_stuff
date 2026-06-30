@@ -12,7 +12,6 @@ import hashlib
 import json
 import logging
 import os
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ class PredictionCache:
         canonical = json.dumps(raw, sort_keys=True)
         return f"nyc:pred:{hashlib.md5(canonical.encode()).hexdigest()}"
 
-    def get(self, raw: dict) -> Optional[dict]:
+    def get(self, raw: dict) -> dict | None:
         if not self._client:
             return None
         try:

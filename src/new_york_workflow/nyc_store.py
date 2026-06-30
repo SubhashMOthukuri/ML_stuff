@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id      TEXT    NOT NULL,
     timestamp       TEXT    NOT NULL,
+    listing_id      TEXT,
     borough         TEXT,
     room_type       TEXT,
     accommodates    INTEGER,
@@ -44,6 +45,11 @@ CREATE TABLE IF NOT EXISTS predictions (
 CREATE INDEX IF NOT EXISTS idx_borough   ON predictions(borough);
 CREATE INDEX IF NOT EXISTS idx_ts        ON predictions(timestamp);
 CREATE INDEX IF NOT EXISTS idx_room_type ON predictions(room_type);
+"""
+
+_MIGRATION = """
+ALTER TABLE predictions ADD COLUMN listing_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_listing_id ON predictions(listing_id);
 """
 
 
@@ -65,6 +71,16 @@ class RequestStore:
     def _init_schema(self) -> None:
         with self._lock, self._conn() as c:
             c.executescript(_SCHEMA)
+            # migrate existing databases that predate the listing_id column
+            cols = {row[1] for row in c.execute("PRAGMA table_info(predictions)")}
+            if "listing_id" not in cols:
+                for stmt in _MIGRATION.strip().split(";"):
+                    stmt = stmt.strip()
+                    if stmt:
+                        try:
+                            c.execute(stmt)
+                        except Exception:
+                            pass
 
     # ── writes ────────────────────────────────────────────────────────────────
 
@@ -74,16 +90,18 @@ class RequestStore:
         raw: dict,
         result: dict,
         cache_hit: bool = False,
+        listing_id: str | None = None,
     ) -> None:
         with self._lock, self._conn() as c:
             c.execute(
                 """INSERT INTO predictions
-                   (request_id, timestamp, borough, room_type, accommodates,
+                   (request_id, timestamp, listing_id, borough, room_type, accommodates,
                     bedrooms, bathrooms, predicted_price, log_price, cache_hit, features_json)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     request_id,
                     datetime.now(timezone.utc).isoformat(),
+                    listing_id,
                     raw.get("borough"),
                     raw.get("room_type"),
                     raw.get("accommodates"),
@@ -95,6 +113,20 @@ class RequestStore:
                     json.dumps(raw),
                 ),
             )
+
+    def get_listings_pending_ground_truth(self) -> list[dict]:
+        """Return rows that have a listing_id but no ground truth yet."""
+        with self._lock, self._conn() as c:
+            rows = c.execute(
+                """SELECT request_id, listing_id, predicted_price, timestamp
+                   FROM predictions
+                   WHERE listing_id IS NOT NULL
+                   AND listing_id NOT IN (
+                       SELECT listing_id FROM ground_truth
+                   )
+                   ORDER BY timestamp DESC""",
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     # ── reads ─────────────────────────────────────────────────────────────────
 

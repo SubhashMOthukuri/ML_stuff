@@ -1,4 +1,4 @@
-import { Activity, RefreshCw, Clock } from 'lucide-react'
+import { Activity, RefreshCw, Clock, Target } from 'lucide-react'
 import { usePolling } from '../hooks/usePolling'
 
 const STATUS_CFG = {
@@ -25,6 +25,7 @@ export default function DriftPage() {
   // Read-only poll on mount — no push_alert so page loads don't create alert noise.
   // The "Run Check" button uses the push_alert=true URL to explicitly fire an alert if warranted.
   const { data, loading, error, refresh, lastFetch } = usePolling('/api/drift?window_hours=168', null)
+  const gt = usePolling('/api/ground-truth/stats', null)
 
   async function runCheck() {
     await fetch('/api/drift?window_hours=168&push_alert=true')
@@ -59,6 +60,9 @@ export default function DriftPage() {
       )}
 
       {loading && !data && <Skeleton />}
+
+      {/* Ground Truth Accuracy */}
+      <GroundTruthCard data={gt.data} loading={gt.loading} onRefresh={gt.refresh} />
 
       {data && (
         <>
@@ -219,7 +223,7 @@ export default function DriftPage() {
 function Section({ title, children }) {
   return (
     <div className="rounded-2xl border border-white/8 bg-[#0f0f14] p-5 space-y-4">
-      <h3 className="text-white text-sm font-semibold">{title}</h3>
+      <h3 className="text-white text-sm font-semibold flex items-center gap-2">{title}</h3>
       {children}
     </div>
   )
@@ -251,5 +255,102 @@ function Skeleton() {
       <div className="h-32 rounded-2xl bg-white/5" />
       <div className="h-64 rounded-2xl bg-white/5" />
     </div>
+  )
+}
+
+function GroundTruthCard({ data, loading, onRefresh }) {
+  const s = data?.stats ?? {}
+  const n = s.n_evaluated ?? 0
+  const prodMae = s.mae_dollar
+  const baseMae = data?.baseline_mae
+  const drift   = data?.mae_drift
+  const dist    = data?.error_distribution ?? {}
+
+  const maeDriftColor = drift == null ? '#6b7280'
+    : drift > 10  ? '#e11d48'
+    : drift > 0   ? '#f59e0b'
+    : '#10b981'
+
+  return (
+    <Section title={
+      <span className="flex items-center gap-2">
+        <Target size={14} className="text-violet-400" />
+        Ground Truth Accuracy
+        <span className="text-[10px] font-normal text-white/30 ml-1">
+          actual prices vs predictions · populated by fetch_ground_truth.py
+        </span>
+      </span>
+    }>
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-white/40 text-xs">{n} predictions evaluated</span>
+        <button onClick={onRefresh}
+          className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-colors">
+          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {n === 0 ? (
+        <div className="text-center py-6 space-y-2">
+          <p className="text-white/30 text-sm">No ground truth data yet.</p>
+          <p className="text-white/20 text-xs">
+            Add a listing ID when predicting, then run:
+          </p>
+          <code className="text-violet-400/70 text-xs bg-white/[0.03] px-3 py-1 rounded-lg inline-block">
+            python scripts/fetch_ground_truth.py
+          </code>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+            <MiniKPI label="Production MAE"  value={prodMae != null ? `$${prodMae.toFixed(0)}` : '—'} color="#a78bfa" />
+            <MiniKPI label="Training MAE"    value={baseMae != null ? `$${baseMae.toFixed(0)}` : '—'} />
+            <MiniKPI label="MAE Drift"
+              value={drift != null ? `${drift > 0 ? '+' : ''}$${drift.toFixed(0)}` : '—'}
+              color={maeDriftColor} />
+            <MiniKPI label="MAPE"            value={s.mape_pct != null ? `${s.mape_pct.toFixed(1)}%` : '—'} />
+          </div>
+
+          {/* error distribution */}
+          {Object.keys(dist).length > 0 && (
+            <div>
+              <p className="text-white/30 text-xs mb-2">Error distribution</p>
+              <div className="space-y-1.5">
+                {Object.entries(dist).map(([band, info]) => (
+                  <div key={band} className="flex items-center gap-3">
+                    <span className="text-white/50 text-xs w-16 shrink-0">{band}</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-white/8 overflow-hidden">
+                      <div className="h-full rounded-full bg-violet-500/60 transition-all duration-700"
+                           style={{ width: `${info.pct}%` }} />
+                    </div>
+                    <span className="text-white/40 text-xs w-12 text-right">{info.pct}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* recent evaluations */}
+          {data?.recent?.length > 0 && (
+            <details className="mt-4 text-xs text-white/40">
+              <summary className="cursor-pointer hover:text-white/60 transition-colors">
+                Recent evaluations ({data.recent.length})
+              </summary>
+              <div className="mt-2 space-y-1">
+                {data.recent.map((r, i) => (
+                  <div key={i} className="flex justify-between px-2 py-1 rounded bg-white/[0.02] font-mono">
+                    <span className="text-white/30 truncate w-24">{r.listing_id}</span>
+                    <span className="text-white/50">pred ${r.predicted_price?.toFixed(0)}</span>
+                    <span className="text-white/50">actual ${r.actual_price?.toFixed(0)}</span>
+                    <span style={{ color: r.abs_error > 50 ? '#f87171' : '#34d399' }}>
+                      Δ${r.abs_error?.toFixed(0)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </>
+      )}
+    </Section>
   )
 }

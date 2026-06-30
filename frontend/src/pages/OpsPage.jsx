@@ -1,12 +1,13 @@
 import { useState } from 'react'
-import { Server, Database, Inbox, Download, RefreshCw, Trash2, Cpu, Clock, Zap, AlertCircle, HardDrive } from 'lucide-react'
+import { Server, Database, Inbox, Download, RefreshCw, Trash2, Cpu, Clock, Zap, AlertCircle, HardDrive, GitBranch, ExternalLink } from 'lucide-react'
 import { usePolling } from '../hooks/usePolling'
 
 export default function OpsPage() {
-  const health  = usePolling('/api/health', 5000)
-  const metrics = usePolling('/api/metrics', 5000)
-  const dlq     = usePolling('/api/dlq?n=20', 10000)
-  const tdStats = usePolling('/api/training-data/stats', 10000)
+  const health   = usePolling('/api/health', 5000)
+  const metrics  = usePolling('/api/metrics', 5000)
+  const dlq      = usePolling('/api/dlq?n=20', 10000)
+  const tdStats  = usePolling('/api/training-data/stats', 10000)
+  const modelReg = usePolling('/api/model-info', null)   // fetch once; user refreshes manually
 
   const h = health.data ?? {}
   const m = metrics.data ?? {}
@@ -112,6 +113,9 @@ export default function OpsPage() {
         <Inline label="Latency p95" value={lat.p95 != null ? `${lat.p95}ms` : '—'} />
         <Inline label="Latency avg" value={lat.avg != null ? `${lat.avg}ms` : '—'} />
       </div>
+
+      {/* MLflow Model Registry */}
+      <ModelRegistryCard data={modelReg.data} loading={modelReg.loading} onRefresh={modelReg.refresh} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* cache panel */}
@@ -298,5 +302,90 @@ function RefreshBtn({ onClick, spinning }) {
       className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-colors">
       <RefreshCw size={13} className={spinning ? 'animate-spin' : ''} />
     </button>
+  )
+}
+
+function ModelRegistryCard({ data, loading, onRefresh }) {
+  const reg = data?.registry ?? null
+  const fromMlflow = reg?.source === 'mlflow'
+
+  const kv = fromMlflow
+    ? [
+        { label: 'Model Name',   value: reg.model_name },
+        { label: 'Version',      value: `v${reg.version}`, accent: '#a78bfa' },
+        { label: 'Run ID',       value: reg.run_id?.slice(0, 8) + '…' },
+        { label: 'Run Name',     value: reg.run_name ?? '—' },
+        { label: 'Git SHA',      value: reg.git_sha ?? '—' },
+        { label: 'Data Date',    value: reg.data_date ?? '—' },
+        { label: 'R² test',      value: reg.metrics?.r2_test?.toFixed(4) ?? '—', accent: '#34d399' },
+        { label: 'RMSE (log)',   value: reg.metrics?.rmse_log?.toFixed(4) ?? '—' },
+        { label: 'MAE ($)',      value: reg.metrics?.mae_dollar != null ? `$${Math.round(reg.metrics.mae_dollar)}` : '—' },
+      ]
+    : reg
+    ? [
+        { label: 'Source',       value: 'local report (MLflow offline)' },
+        { label: 'Best Model',   value: reg.best_model ?? '—' },
+        { label: 'Trained',      value: reg.timestamp ? new Date(reg.timestamp).toLocaleDateString() : '—' },
+        { label: 'R² test',      value: reg.metrics?.r2?.toFixed(4) ?? '—', accent: '#34d399' },
+        { label: 'MAE ($)',      value: reg.metrics?.mae_dollar != null ? `$${Math.round(reg.metrics.mae_dollar)}` : '—' },
+      ]
+    : []
+
+  return (
+    <Card title="Model Registry" icon={GitBranch} accent="#a78bfa"
+          action={
+            <div className="flex items-center gap-2">
+              <RefreshBtn onClick={onRefresh} spinning={loading} />
+              {fromMlflow && reg.mlflow_ui && (
+                <a href={reg.mlflow_ui} target="_blank" rel="noreferrer"
+                   className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium
+                              text-violet-400 border border-violet-500/25 bg-violet-500/10
+                              hover:bg-violet-500/20 transition-colors">
+                  <ExternalLink size={11} />
+                  MLflow UI
+                </a>
+              )}
+            </div>
+          }>
+      {!reg ? (
+        <p className="text-white/30 text-sm">
+          {loading ? 'Loading…' : 'Model registry unavailable'}
+        </p>
+      ) : (
+        <>
+          <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold mb-4 ${
+            fromMlflow
+              ? 'bg-violet-500/15 border border-violet-500/25 text-violet-300'
+              : 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
+          }`}>
+            <span className="w-1.5 h-1.5 rounded-full bg-current" />
+            {fromMlflow ? 'champion alias · MLflow registry' : 'fallback · local report'}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            {kv.map(({ label, value, accent }) => (
+              <div key={label} className="rounded-xl border border-white/6 bg-white/[0.02] p-3">
+                <p className="text-white/35 text-xs mb-1">{label}</p>
+                <p className="font-semibold text-sm truncate" style={{ color: accent ?? '#fff' }}>{value}</p>
+              </div>
+            ))}
+          </div>
+          {fromMlflow && reg.metrics && Object.keys(reg.metrics).length > 0 && (
+            <details className="mt-3 text-xs text-white/40">
+              <summary className="cursor-pointer hover:text-white/60 transition-colors">
+                All run metrics ({Object.keys(reg.metrics).length})
+              </summary>
+              <div className="mt-2 grid grid-cols-2 gap-1.5">
+                {Object.entries(reg.metrics).map(([k, v]) => (
+                  <div key={k} className="flex justify-between px-2 py-1 rounded bg-white/[0.03] font-mono">
+                    <span className="text-white/40">{k}</span>
+                    <span className="text-white/70">{v}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </>
+      )}
+    </Card>
   )
 }

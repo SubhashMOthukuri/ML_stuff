@@ -20,3 +20,5 @@ slowapi>=0.1.9
 opentelemetry-sdk>=1.23.0
 opentelemetry-instrumentation-fastapi>=0.44b0
 opentelemetry-exporter-otlp-proto-grpc>=1.23.0
+# ── MLflow experiment tracking & model registry ──────────────────────────────
+mlflow>=2.0.0

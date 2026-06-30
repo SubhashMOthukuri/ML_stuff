@@ -59,6 +59,7 @@ from src.new_york_workflow.nyc_dlq import DeadLetterQueue
 from src.new_york_workflow.nyc_drift import DriftMonitor
 from src.new_york_workflow.nyc_alerts import alerts as alert_store
 from src.new_york_workflow.nyc_shadow import ShadowPredictor
+from src.new_york_workflow.nyc_ground_truth import GroundTruthStore
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -87,28 +88,32 @@ limiter    = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT])
 
 # ── singletons (populated at startup) ────────────────────────────────────────
 
-predictor: NYCAirbnbPredictorONNX = None
-cache:     PredictionCache        = None
-store:     RequestStore           = None
-dlq:       DeadLetterQueue        = None
-drift:     DriftMonitor           = None
-shadow:    ShadowPredictor        = None
+predictor:    NYCAirbnbPredictorONNX = None
+cache:        PredictionCache        = None
+store:        RequestStore           = None
+dlq:          DeadLetterQueue        = None
+drift:        DriftMonitor           = None
+shadow:       ShadowPredictor        = None
+ground_truth: GroundTruthStore       = None
+_r2_test:     float                  = 0.0
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global predictor, cache, store, dlq, drift, shadow
+    global predictor, cache, store, dlq, drift, shadow, ground_truth, _r2_test
 
     logger.info("Startup — initialising services")
-    predictor = NYCAirbnbPredictorONNX()
-    cache      = PredictionCache()
-    store      = RequestStore()
-    dlq        = DeadLetterQueue()
-    drift      = DriftMonitor()
-    shadow     = ShadowPredictor()
+    predictor    = NYCAirbnbPredictorONNX()
+    cache        = PredictionCache()
+    store        = RequestStore()
+    dlq          = DeadLetterQueue()
+    drift        = DriftMonitor()
+    shadow       = ShadowPredictor()
+    ground_truth = GroundTruthStore()
     shadow.inject_champion(predictor)   # share _engineer() + feature_list + scaler
 
-    info = predictor.model_info()
+    info     = predictor.model_info()
+    _r2_test = info["r2_test"]
     logger.info(
         "Ready | backend=%s  R²=%.4f  cache=%s  store=%s  dlq=%s  shadow=%s",
         info["inference_backend"], info["r2_test"],
@@ -184,6 +189,7 @@ async def observe(request: Request, call_next) -> Response:
 # ── schemas ───────────────────────────────────────────────────────────────────
 
 class ListingFeatures(BaseModel):
+    listing_id:                  Optional[str] = Field(None, description="InsideAirbnb listing ID — enables ground truth feedback loop")
     accommodates:                int   = Field(..., ge=1, le=16)
     bedrooms:                    float = Field(1.0, ge=0, le=20)
     bathrooms:                   float = Field(1.0, ge=0, le=20)
@@ -246,15 +252,16 @@ def root():
 
 @app.get("/health")
 def health():
-    m = metrics.summary()
+    m    = metrics.summary()
+    info = predictor.model_info()
     return {
         "status":            "healthy",
         "uptime":            m["uptime_human"],
         "total_requests":    m["totals"]["requests"],
         "total_predictions": m["predictions"]["total"],
         "error_rate":        m["totals"]["error_rate"],
-        "model_r2":          predictor.model_info()["r2_test"],
-        "inference_backend": predictor.model_info()["inference_backend"],
+        "model_r2":          info["r2_test"],
+        "inference_backend": info["inference_backend"],
         "cache":             cache.stats(),
         "dlq_size":          dlq.size(),
         "store_rows":        store.count(),
@@ -280,7 +287,53 @@ def get_metrics():
 
 @app.get("/model-info")
 def model_info():
-    return predictor.model_info()
+    """
+    Current champion model metadata.
+    Primary source: MLflow Model Registry (alias 'champion').
+    Fallback: local nyc_training_report.json when MLflow is unreachable.
+    """
+    import json as _json
+    base = predictor.model_info()   # always include ONNX / local info
+
+    mlflow_uri  = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{_ROOT / 'mlflow.db'}")
+    mlflow_url  = os.getenv("MLFLOW_UI_URL", "http://localhost:5000")
+    model_name  = "nyc-airbnb-xgboost"
+
+    try:
+        import mlflow
+        from mlflow import MlflowClient
+        mlflow.set_tracking_uri(mlflow_uri)
+        client = MlflowClient(tracking_uri=mlflow_uri)
+        mv     = client.get_model_version_by_alias(model_name, "champion")
+        run    = client.get_run(mv.run_id)
+        return {
+            **base,
+            "registry": {
+                "source":        "mlflow",
+                "model_name":    model_name,
+                "version":       mv.version,
+                "run_id":        mv.run_id,
+                "run_name":      run.info.run_name,
+                "registered_at": mv.creation_timestamp,
+                "git_sha":       mv.tags.get("git_sha", "—"),
+                "data_date":     mv.tags.get("data_date", "—"),
+                "metrics":       {k: round(v, 4) for k, v in run.data.metrics.items()},
+                "mlflow_ui":     f"{mlflow_url}/#/models/{model_name}/versions/{mv.version}",
+            }
+        }
+    except Exception as exc:
+        # Graceful fallback — MLFLOW_TRACKING_URI may not be running locally
+        report_path = _ROOT / "models" / "nyc" / "nyc_training_report.json"
+        registry_fallback = {"source": "local_report", "error": str(exc)}
+        if report_path.exists():
+            rpt = _json.loads(report_path.read_text())
+            registry_fallback.update({
+                "timestamp":  rpt.get("timestamp"),
+                "best_model": rpt.get("best_model"),
+                "n_features": rpt.get("n_features"),
+                "metrics":    rpt.get("models", {}).get("XGBoost", {}).get("test", {}),
+            })
+        return {**base, "registry": registry_fallback}
 
 
 @app.get("/cache/stats")
@@ -367,6 +420,35 @@ def drift_check(window_hours: int = 168, push_alert: bool = False):
     return report.to_dict()
 
 
+@app.get("/ground-truth/stats")
+def ground_truth_stats():
+    """
+    Production accuracy measured against real InsideAirbnb prices.
+    Populated by scripts/fetch_ground_truth.py (run monthly after each snapshot).
+    """
+    stats = ground_truth.stats()
+    recent = ground_truth.recent(n=10)
+    dist   = ground_truth.error_distribution()
+
+    baseline_mae = None
+    try:
+        import json as _json
+        bp = _ROOT / "models" / "nyc" / "nyc_training_report.json"
+        if bp.exists():
+            rpt = _json.loads(bp.read_text())
+            baseline_mae = rpt.get("models", {}).get("XGBoost", {}).get("test", {}).get("mae_dollar")
+    except Exception:
+        pass
+
+    return {
+        "stats":            stats,
+        "baseline_mae":     baseline_mae,
+        "mae_drift":        round(stats["mae_dollar"] - baseline_mae, 2) if stats["mae_dollar"] and baseline_mae else None,
+        "error_distribution": dist,
+        "recent":           recent,
+    }
+
+
 @app.get("/alerts")
 def get_alerts(pending_only: bool = False, limit: int = 50):
     """
@@ -401,24 +483,27 @@ def predict(listing: ListingFeatures, request: Request):
     Full request payload is logged to SQLite for retraining. 5xx pushes to DLQ.
     """
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-    raw        = listing.model_dump()
+    listing_id = listing.listing_id
+    raw        = listing.model_dump(exclude={"listing_id"})
 
     with tracer.start_as_current_span("predict") as span:
         span.set_attribute("listing.borough",      listing.borough)
         span.set_attribute("listing.room_type",    listing.room_type)
         span.set_attribute("listing.accommodates", listing.accommodates)
+        if listing_id:
+            span.set_attribute("listing.id", listing_id)
 
         # ── 1. cache lookup ───────────────────────────────────────────────
         cached = cache.get(raw)
         if cached:
             span.set_attribute("cache.hit", True)
-            store.log_prediction(request_id, raw, cached, cache_hit=True)
+            store.log_prediction(request_id, raw, cached, cache_hit=True, listing_id=listing_id)
             metrics.record_prediction(cached["price_usd"])
             logger.info("predict | rid=%s CACHE HIT %s → %s", request_id[:8], listing.borough, cached["price_str"])
             return PredictionResponse(
                 **cached,
                 model      = "XGBoost (ONNX Runtime)",
-                r2_test    = 0.8241,
+                r2_test    = _r2_test,
                 request_id = request_id,
                 cache_hit  = True,
             )
@@ -445,7 +530,7 @@ def predict(listing: ListingFeatures, request: Request):
 
         # ── 3. write-through: cache + store ───────────────────────────────
         cache.set(raw, result)
-        store.log_prediction(request_id, raw, result, cache_hit=False)
+        store.log_prediction(request_id, raw, result, cache_hit=False, listing_id=listing_id)
         metrics.record_prediction(result["price_usd"])
 
         # ── 4. shadow: run challenger alongside champion (fire-and-forget) ────
@@ -469,7 +554,7 @@ def predict(listing: ListingFeatures, request: Request):
         return PredictionResponse(
             **result,
             model      = "XGBoost (ONNX Runtime)",
-            r2_test    = 0.8241,
+            r2_test    = _r2_test,
             request_id = request_id,
             cache_hit  = False,
         )
@@ -487,17 +572,18 @@ def predict_batch(listings: List[ListingFeatures], request: Request):
         span.set_attribute("batch.size", len(listings))
         results = []
         for i, listing in enumerate(listings):
-            raw    = listing.model_dump()
+            lid = listing.listing_id
+            raw = listing.model_dump(exclude={"listing_id"})
             cached = cache.get(raw)
             if cached:
                 results.append({"index": i, **cached, "cache_hit": True, "error": None})
-                store.log_prediction(f"{request_id}:{i}", raw, cached, cache_hit=True)
+                store.log_prediction(f"{request_id}:{i}", raw, cached, cache_hit=True, listing_id=lid)
                 metrics.record_prediction(cached["price_usd"])
             else:
                 try:
                     result = predictor.predict_raw(raw)
                     cache.set(raw, result)
-                    store.log_prediction(f"{request_id}:{i}", raw, result, cache_hit=False)
+                    store.log_prediction(f"{request_id}:{i}", raw, result, cache_hit=False, listing_id=lid)
                     metrics.record_prediction(result["price_usd"])
                     results.append({"index": i, **result, "cache_hit": False, "error": None})
                 except Exception as exc:

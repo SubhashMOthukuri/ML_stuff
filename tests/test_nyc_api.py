@@ -175,8 +175,8 @@ class TestModelInfo:
         assert body["mae_dollar"] > 0
         assert body["mape_pct"] > 0
 
-    def test_training_rows_present(self, client):
-        assert client.get("/model-info").json()["training_rows"] > 0
+    def test_n_features_present(self, client):
+        assert client.get("/model-info").json()["n_features"] > 0
 
     def test_n_neighbourhoods_reasonable(self, client):
         n = client.get("/model-info").json()["n_neighbourhoods"]

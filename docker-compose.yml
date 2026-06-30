@@ -28,6 +28,30 @@ services:
       timeout: 3s
       retries: 3
 
+  # ── MLflow tracking server ─────────────────────────────────────────────────
+  mlflow:
+    image: python:3.11-slim
+    restart: unless-stopped
+    command: >
+      bash -c "pip install --quiet mlflow>=2.0.0 &&
+               mlflow server
+                 --backend-store-uri sqlite:///mlflow/mlflow.db
+                 --default-artifact-root /mlflow/artifacts
+                 --host 0.0.0.0
+                 --port 5000"
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   # ── API service ─────────────────────────────────────────────────────────────
   api:
     build:
@@ -47,6 +71,8 @@ services:
       CACHE_TTL_SECONDS: "300"
       PREDICTION_DB: /app/data/predictions.db
       DLQ_MAX_SIZE: "10000"
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_UI_URL: http://localhost:5000
       # OTLP_ENDPOINT: http://otel-collector:4317
     volumes:
       - ./models/nyc:/app/models/nyc:ro
@@ -89,3 +115,4 @@ networks:
 
 volumes:
   predictions_data:    # named volume — survives container restarts
+  mlflow_data:         # MLflow SQLite DB + artifact store
