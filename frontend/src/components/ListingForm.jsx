@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { MapPin, Users, Star, Wifi, ChevronDown, Home } from 'lucide-react'
+import { MapPin, Users, Star, Wifi, ChevronDown, Home, Link } from 'lucide-react'
 
 const BOROUGHS = ['Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island']
 const ROOM_TYPES = ['Entire home/apt', 'Private room', 'Hotel room', 'Shared room']
@@ -312,6 +312,36 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
           </div>
         </Card>
       )}
+
+      {/* ── Listing ID (optional — enables ground truth tracking) ── */}
+      <div className="rounded-2xl border border-white/6 bg-white/[0.02] px-5 py-4">
+        <div className="flex items-start gap-3">
+          <Link size={14} className="text-violet-400 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="text-white/60 text-xs font-medium mb-1.5">
+              Airbnb Listing ID
+              <span className="text-white/25 font-normal ml-2">optional · enables accuracy tracking</span>
+            </p>
+            <input
+              type="text"
+              value={form.listing_id ?? ''}
+              onChange={e => {
+                const raw = e.target.value
+                const m   = raw.match(/\/rooms\/(\d+)/)
+                set('listing_id', m ? m[1] : raw.trim())
+              }}
+              placeholder="12345678 or paste an Airbnb URL"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5
+                         text-white/80 text-sm placeholder-white/20 font-mono
+                         focus:outline-none focus:border-violet-500/40 transition-colors"
+            />
+            <p className="text-white/20 text-[11px] mt-1.5 leading-relaxed">
+              When provided, the prediction is stored with this ID so its accuracy can be verified
+              against real InsideAirbnb prices later.
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* ── Submit ── */}
       <button

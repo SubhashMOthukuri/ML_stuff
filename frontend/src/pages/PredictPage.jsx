@@ -25,6 +25,7 @@ const DEFAULT_FORM = {
   reviews_per_month:    1.2,
   review_scores_rating: 4.7,
   amenity_count:        25,
+  listing_id:           '',
   has_gym:              false,
   has_elevator:         false,
   has_dryer:            true,
@@ -45,6 +46,7 @@ export default function PredictPage() {
     const coords  = BOROUGH_COORDS[form.borough] ?? [40.7128, -74.006]
     const payload = {
       ...form,
+      listing_id:                  form.listing_id || undefined,
       latitude:                    coords[0],
       longitude:                   coords[1],
       number_of_reviews_ltm:       Math.min(form.number_of_reviews, 12),
