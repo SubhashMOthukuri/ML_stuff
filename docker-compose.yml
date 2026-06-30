@@ -52,6 +52,29 @@ services:
       retries: 3
       start_period: 60s
 
+  # ── Fluent Bit — log shipper ─────────────────────────────────────────────────
+  fluent-bit:
+    image: fluent/fluent-bit:3.1
+    restart: unless-stopped
+    ports:
+      - "24224:24224"       # forward protocol (Docker log driver)
+      - "24224:24224/udp"
+      - "2020:2020"         # Fluent Bit health/metrics endpoint
+    volumes:
+      - ./fluent-bit:/fluent-bit/etc:ro
+    environment:
+      DD_API_KEY:     ${DD_API_KEY:-}
+      DD_SERVICE:     ${DD_SERVICE:-nyc-api}
+      DD_ENV:         ${DD_ENV:-prod}
+      DD_INTAKE_HOST: ${DD_INTAKE_HOST:-http-intake.logs.datadoghq.com}
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2020/api/v1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   # ── API service ─────────────────────────────────────────────────────────────
   api:
     build:
@@ -61,6 +84,14 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      fluent-bit:
+        condition: service_healthy
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: "localhost:24224"
+        fluentd-async: "true"     # non-blocking: container starts even if Fluent Bit is briefly down
+        tag: "nyc-api.{{.ID}}"
     environment:
       PYTHONPATH: /app
       GUNICORN_WORKERS: 4
