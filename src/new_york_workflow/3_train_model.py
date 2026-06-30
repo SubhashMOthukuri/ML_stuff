@@ -6,6 +6,7 @@ Models: Ridge Regression | Random Forest | XGBoost
 Output: models/nyc/<model>.pkl  +  nyc_training_report.json
 """
 
+import os
 import pandas as pd
 import numpy as np
 import json
@@ -15,6 +16,10 @@ from datetime import datetime
 import logging
 import warnings
 warnings.filterwarnings('ignore')
+
+import mlflow
+import mlflow.sklearn
+import mlflow.xgboost
 
 from scipy import stats as sp
 from statsmodels.stats.outliers_influence import variance_inflation_factor
@@ -37,6 +42,10 @@ BASE_DIR  = Path("/Users/subhashmothukurigmail.com/Projects/ML_stuff")
 DATA_DIR  = BASE_DIR / "data" / "airbnb"
 MODEL_DIR = BASE_DIR / "models" / "nyc"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+MLFLOW_URI  = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{BASE_DIR / 'mlflow.db'}")
+EXPERIMENT  = "nyc-airbnb-price-exploration"   # exploration runs (all 3 models)
+MODEL_NAME  = "nyc-airbnb-xgboost"             # registry name for the XGBoost champion
 
 # ============================================================================
 # CONFIG
@@ -309,7 +318,7 @@ def train_ridge(X_train_sc, X_test_sc, y_train, y_test, feature_cols):
     for feat, c in coef.head(10).items():
         logger.info(f"   {feat:<45} {c:.4f}")
 
-    return model, train_m, test_m
+    return model, best_alpha, train_m, test_m
 
 
 # ============================================================================
@@ -425,7 +434,7 @@ def compare_models(dummy_test, ridge_test, rf_test, xgb_test):
 # ============================================================================
 
 def save_artifacts(ridge, rf, xgb, scaler, feature_cols,
-                   rf_params, xgb_params,
+                   ridge_alpha, rf_params, xgb_params,
                    ridge_train, ridge_test,
                    rf_train, rf_test,
                    xgb_train, xgb_test,
@@ -470,7 +479,7 @@ def save_artifacts(ridge, rf, xgb, scaler, feature_cols,
         'assumption_check': assumption_report,
         'models': {
             'Ridge': {
-                'best_alpha' : None,
+                'best_alpha' : ridge_alpha,
                 'train'      : ridge_train,
                 'test'       : ridge_test,
             },
@@ -495,6 +504,104 @@ def save_artifacts(ridge, rf, xgb, scaler, feature_cols,
 
 
 # ============================================================================
+# MLFLOW — log everything from this training run
+# ============================================================================
+
+def _log_to_mlflow(
+    n_train, n_test, feature_cols,
+    ridge, ridge_alpha, ridge_train, ridge_test,
+    rf, rf_params, rf_cv_rmse, rf_train, rf_test, rf_imp,
+    xgb, xgb_params, xgb_cv_rmse, xgb_train, xgb_test, xgb_imp,
+    best_name, report_path,
+):
+    """
+    Log a full exploration run to MLflow:
+      - Parent run holds dataset info and best-model summary.
+      - Each model (Ridge / RF / XGB) is a nested child run with its own
+        params, metrics, and logged model so you can compare them in the UI
+        and reproduce any individual model from its run ID.
+    """
+    mlflow.set_tracking_uri(MLFLOW_URI)
+    mlflow.set_experiment(EXPERIMENT)
+
+    with mlflow.start_run(run_name=f"exploration-{datetime.now().strftime('%Y%m%d-%H%M')}") as parent:
+        # ── dataset info ──────────────────────────────────────────────────────
+        mlflow.log_params({
+            "n_train":       n_train,
+            "n_test":        n_test,
+            "n_features":    len(feature_cols),
+            "target":        TARGET,
+            "test_size":     TEST_SIZE,
+            "price_cap_pct": PRICE_CAP_PCT,
+            "random_seed":   RANDOM_SEED,
+        })
+        mlflow.set_tag("best_model", best_name)
+        mlflow.log_artifact(str(report_path), artifact_path="report")
+
+        # ── Ridge child run ───────────────────────────────────────────────────
+        with mlflow.start_run(run_name="ridge", nested=True):
+            mlflow.log_params({"alpha": ridge_alpha, "model_type": "Ridge"})
+            mlflow.log_metrics({
+                "r2_train":        ridge_train["r2"],
+                "r2_test":         ridge_test["r2"],
+                "mae_dollar_train": ridge_train["mae_dollar"],
+                "mae_dollar_test":  ridge_test["mae_dollar"],
+                "rmse_dollar_test": ridge_test["rmse_dollar"],
+                "mape_test":        ridge_test["mape"],
+            })
+            mlflow.sklearn.log_model(ridge, "model")
+
+        # ── Random Forest child run ───────────────────────────────────────────
+        with mlflow.start_run(run_name="random_forest", nested=True):
+            mlflow.log_params({**{k: str(v) for k, v in rf_params.items()},
+                               "model_type": "RandomForest"})
+            mlflow.log_metrics({
+                "cv_rmse_log":      rf_cv_rmse,
+                "r2_train":         rf_train["r2"],
+                "r2_test":          rf_test["r2"],
+                "mae_dollar_train":  rf_train["mae_dollar"],
+                "mae_dollar_test":   rf_test["mae_dollar"],
+                "rmse_dollar_test":  rf_test["rmse_dollar"],
+                "mape_test":         rf_test["mape"],
+            })
+            # top-10 feature importances as metrics (visible in compare view)
+            for feat, imp in rf_imp.head(10).items():
+                mlflow.log_metric(f"feat_imp_{feat}", float(imp))
+            mlflow.sklearn.log_model(rf, "model")
+
+        # ── XGBoost child run ─────────────────────────────────────────────────
+        with mlflow.start_run(run_name="xgboost", nested=True):
+            mlflow.log_params({**{k: str(v) for k, v in xgb_params.items()},
+                               "model_type": "XGBoost"})
+            mlflow.log_metrics({
+                "cv_rmse_log":      xgb_cv_rmse,
+                "r2_train":         xgb_train["r2"],
+                "r2_test":          xgb_test["r2"],
+                "mae_dollar_train":  xgb_train["mae_dollar"],
+                "mae_dollar_test":   xgb_test["mae_dollar"],
+                "rmse_dollar_test":  xgb_test["rmse_dollar"],
+                "mape_test":         xgb_test["mape"],
+            })
+            for feat, imp in xgb_imp.head(10).items():
+                mlflow.log_metric(f"feat_imp_{feat}", float(imp))
+            mlflow.xgboost.log_model(
+                xgb, "model",
+                registered_model_name=MODEL_NAME,   # auto-creates registry entry
+            )
+
+        # ── parent summary: best model metrics ────────────────────────────────
+        best_test = {"Ridge": ridge_test, "Random Forest": rf_test, "XGBoost": xgb_test}.get(best_name, xgb_test)
+        mlflow.log_metrics({
+            "best_r2_test":          best_test["r2"],
+            "best_mae_dollar_test":  best_test["mae_dollar"],
+            "best_mape_test":        best_test["mape"],
+        })
+
+        logger.info("MLflow run logged: %s  (experiment: %s)", parent.info.run_id, EXPERIMENT)
+        logger.info("View at: mlflow ui --port 5000 (or docker compose up mlflow)")
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -508,7 +615,7 @@ def main():
     _dummy, dummy_train, dummy_test = train_dummy_baseline(
         X_train_sc, X_test_sc, y_train, y_test
     )
-    ridge, ridge_train, ridge_test = train_ridge(
+    ridge, ridge_alpha, ridge_train, ridge_test = train_ridge(
         X_train_sc, X_test_sc, y_train, y_test, feature_cols
     )
     rf, rf_params, rf_cv, rf_train, rf_test, rf_imp = train_random_forest(
@@ -522,7 +629,7 @@ def main():
 
     save_artifacts(
         ridge, rf, xgb, scaler, feature_cols,
-        rf_params, xgb_params,
+        ridge_alpha, rf_params, xgb_params,
         ridge_train, ridge_test,
         rf_train, rf_test,
         xgb_train, xgb_test,
@@ -530,9 +637,22 @@ def main():
         assumption_report, best_name
     )
 
+    # ── MLflow: log the full exploration run ──────────────────────────────────
+    try:
+        _log_to_mlflow(
+            n_train=len(X_train), n_test=len(X_test), feature_cols=feature_cols,
+            ridge=ridge, ridge_alpha=ridge_alpha, ridge_train=ridge_train, ridge_test=ridge_test,
+            rf=rf, rf_params=rf_params, rf_cv_rmse=rf_cv, rf_train=rf_train, rf_test=rf_test, rf_imp=rf_imp,
+            xgb=xgb, xgb_params=xgb_params, xgb_cv_rmse=xgb_cv, xgb_train=xgb_train, xgb_test=xgb_test, xgb_imp=xgb_imp,
+            best_name=best_name,
+            report_path=MODEL_DIR / "nyc_training_report.json",
+        )
+    except Exception as exc:
+        logger.warning("MLflow logging skipped (%s) — training artefacts still saved locally", exc)
+
     logger.info(f"""
 ================================================================================
-✅ ALL MODELS TRAINED
+✅ ALL MODELS TRAINED + LOGGED TO MLFLOW
 ================================================================================
   Dummy Baseline   : R²={dummy_test['r2']:.4f}  MAE=${dummy_test['mae_dollar']:.2f}  MAPE={dummy_test['mape']:.2f}%
   Ridge Regression : R²={ridge_test['r2']:.4f}  MAE=${ridge_test['mae_dollar']:.2f}  MAPE={ridge_test['mape']:.2f}%
@@ -541,7 +661,8 @@ def main():
 
   🏆 Best model: {best_name}
 
-✅ READY FOR: Inference pipeline (4_predict.py)
+  MLflow UI: mlflow ui --port 5000  →  http://localhost:5000
+  Experiment: {EXPERIMENT}
 ================================================================================
 """)
     return rf, xgb, ridge

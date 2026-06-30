@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR   = Path(__file__).resolve().parents[1]
 DATA_DIR   = BASE_DIR / "data" / "airbnb"
 MODEL_DIR  = BASE_DIR / "models" / "nyc"
-MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", str(BASE_DIR / "mlruns"))
+MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{BASE_DIR / 'mlflow.db'}")
 MODEL_NAME = "nyc-airbnb-xgboost"
 
 TARGET      = "log_price"
@@ -336,24 +336,67 @@ def export_onnx(model: XGBRegressor, feature_list: list[str], out_path: Path) ->
 
 # ── MLflow ─────────────────────────────────────────────────────────────────────
 
+def _git_sha() -> str:
+    import subprocess
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=BASE_DIR, stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return "unknown"
+
+
 def register_with_mlflow(
     model,
     metrics: dict,
     feature_list: list[str],
     scaler,
     stage: str,       # "Production" or "Staging"
+    n_samples: int = 0,
+    data_date: str = "",
 ) -> int:
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment("nyc-airbnb-retraining")
 
-    with mlflow.start_run(run_name=f"retrain-{datetime.now().strftime('%Y%m%d-%H%M')}"):
+    onnx_path = (
+        MODEL_DIR / "nyc_xgb_model.onnx" if stage == "Production"
+        else MODEL_DIR / "challenger.onnx"
+    )
+
+    with mlflow.start_run(run_name=f"retrain-{datetime.now().strftime('%Y%m%d-%H%M')}") as run:
+        # ── hyperparams ───────────────────────────────────────────────────────
         mlflow.log_params({k: str(v) for k, v in XGB_PARAMS.items()})
+        mlflow.log_params({
+            "n_features":  len(feature_list),
+            "n_samples":   n_samples,
+            "data_date":   data_date or str(date.today()),
+            "gate_stage":  stage,
+        })
+
+        # ── metrics ───────────────────────────────────────────────────────────
         mlflow.log_metrics(metrics)
-        mlflow.log_param("n_features", len(feature_list))
+        mlflow.log_metric("gate_passed", 1 if stage == "Production" else 0)
+
+        # ── tags for easy filtering in the UI ─────────────────────────────────
+        mlflow.set_tags({
+            "git_sha":    _git_sha(),
+            "pipeline":   "nightly-retrain",
+            "stage":      stage,
+            "data_date":  data_date or str(date.today()),
+        })
+
+        # ── artifacts ─────────────────────────────────────────────────────────
         mlflow.log_artifact(str(MODEL_DIR / "baseline_stats.json"), artifact_path="baseline")
+        if onnx_path.exists():
+            mlflow.log_artifact(str(onnx_path), artifact_path="onnx")
+
+        # ── register XGBoost model in Model Registry ──────────────────────────
         mlflow.xgboost.log_model(
             model, artifact_path="model", registered_model_name=MODEL_NAME
         )
+
+        run_id = run.info.run_id
 
     client  = MlflowClient(tracking_uri=MLFLOW_URI)
     version = client.get_latest_versions(MODEL_NAME)[0].version
@@ -361,16 +404,26 @@ def register_with_mlflow(
     client.set_model_version_tag(MODEL_NAME, version, "metrics_r2",  str(metrics["r2"]))
     client.set_model_version_tag(MODEL_NAME, version, "metrics_mae", str(metrics["mae_dollar"]))
     client.set_model_version_tag(MODEL_NAME, version, "gate_stage",  stage)
+    client.set_model_version_tag(MODEL_NAME, version, "run_id",      run_id)
+    client.set_model_version_tag(MODEL_NAME, version, "git_sha",     _git_sha())
 
     if stage == "Production":
-        for mv in client.get_latest_versions(MODEL_NAME, stages=["Production"]):
-            if mv.version != version:
-                client.set_registered_model_alias(MODEL_NAME, "previous", mv.version)
+        # Archive current champion as "previous" before promoting new one
+        try:
+            prev = client.get_model_version_by_alias(MODEL_NAME, "champion")
+            client.set_registered_model_alias(MODEL_NAME, "previous", prev.version)
+            client.delete_registered_model_alias(MODEL_NAME, "champion")
+        except Exception:
+            pass
         client.set_registered_model_alias(MODEL_NAME, "champion", version)
-        logger.info("Promoted version %s to Production (alias: champion)", version)
+        logger.info("Promoted v%s to Production (alias: champion)  run_id=%s", version, run_id)
     else:
+        try:
+            client.delete_registered_model_alias(MODEL_NAME, "challenger")
+        except Exception:
+            pass
         client.set_registered_model_alias(MODEL_NAME, "challenger", version)
-        logger.info("Registered version %s as Staging (alias: challenger) — gates failed", version)
+        logger.info("Registered v%s as Staging (alias: challenger)  run_id=%s", version, run_id)
 
     return int(version)
 
@@ -433,6 +486,9 @@ def main(force: bool = False, rollback_version: int | None = None, no_download: 
 
     passed, reasons = check_gates(metrics, baseline, force=force)
 
+    n_samples  = len(df)
+    data_date  = str(date.today())
+
     if passed:
         logger.info("✓ Validation gate PASSED — promoting to Production")
         with open(MODEL_DIR / "nyc_xgb_model.pkl", "wb") as f:
@@ -440,7 +496,10 @@ def main(force: bool = False, rollback_version: int | None = None, no_download: 
         with open(MODEL_DIR / "nyc_scaler.pkl", "wb") as f:
             pickle.dump(scaler, f)
         export_onnx(model, feature_list, MODEL_DIR / "nyc_xgb_model.onnx")
-        version = register_with_mlflow(model, metrics, feature_list, scaler, stage="Production")
+        version = register_with_mlflow(
+            model, metrics, feature_list, scaler,
+            stage="Production", n_samples=n_samples, data_date=data_date,
+        )
 
         # Update baseline metrics so the next gate is relative to this run
         baseline["model_metrics"] = metrics
@@ -454,7 +513,10 @@ def main(force: bool = False, rollback_version: int | None = None, no_download: 
         logger.warning("✗ Validation gate FAILED:")
         for reason in reasons:
             logger.warning("  - %s", reason)
-        version = register_with_mlflow(model, metrics, feature_list, scaler, stage="Staging")
+        version = register_with_mlflow(
+            model, metrics, feature_list, scaler,
+            stage="Staging", n_samples=n_samples, data_date=data_date,
+        )
         logger.warning("Registered as Staging version %d — champion unchanged", version)
 
         # Save challenger artefacts for shadow deployment.

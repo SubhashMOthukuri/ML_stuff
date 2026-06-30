@@ -246,15 +246,16 @@ def root():
 
 @app.get("/health")
 def health():
-    m = metrics.summary()
+    m    = metrics.summary()
+    info = predictor.model_info()
     return {
         "status":            "healthy",
         "uptime":            m["uptime_human"],
         "total_requests":    m["totals"]["requests"],
         "total_predictions": m["predictions"]["total"],
         "error_rate":        m["totals"]["error_rate"],
-        "model_r2":          predictor.model_info()["r2_test"],
-        "inference_backend": predictor.model_info()["inference_backend"],
+        "model_r2":          info["r2_test"],
+        "inference_backend": info["inference_backend"],
         "cache":             cache.stats(),
         "dlq_size":          dlq.size(),
         "store_rows":        store.count(),
@@ -280,7 +281,53 @@ def get_metrics():
 
 @app.get("/model-info")
 def model_info():
-    return predictor.model_info()
+    """
+    Current champion model metadata.
+    Primary source: MLflow Model Registry (alias 'champion').
+    Fallback: local nyc_training_report.json when MLflow is unreachable.
+    """
+    import json as _json
+    base = predictor.model_info()   # always include ONNX / local info
+
+    mlflow_uri  = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{_ROOT / 'mlflow.db'}")
+    mlflow_url  = os.getenv("MLFLOW_UI_URL", "http://localhost:5000")
+    model_name  = "nyc-airbnb-xgboost"
+
+    try:
+        import mlflow
+        from mlflow import MlflowClient
+        mlflow.set_tracking_uri(mlflow_uri)
+        client = MlflowClient(tracking_uri=mlflow_uri)
+        mv     = client.get_model_version_by_alias(model_name, "champion")
+        run    = client.get_run(mv.run_id)
+        return {
+            **base,
+            "registry": {
+                "source":        "mlflow",
+                "model_name":    model_name,
+                "version":       mv.version,
+                "run_id":        mv.run_id,
+                "run_name":      run.info.run_name,
+                "registered_at": mv.creation_timestamp,
+                "git_sha":       mv.tags.get("git_sha", "—"),
+                "data_date":     mv.tags.get("data_date", "—"),
+                "metrics":       {k: round(v, 4) for k, v in run.data.metrics.items()},
+                "mlflow_ui":     f"{mlflow_url}/#/models/{model_name}/versions/{mv.version}",
+            }
+        }
+    except Exception as exc:
+        # Graceful fallback — MLFLOW_TRACKING_URI may not be running locally
+        report_path = _ROOT / "models" / "nyc" / "nyc_training_report.json"
+        registry_fallback = {"source": "local_report", "error": str(exc)}
+        if report_path.exists():
+            rpt = _json.loads(report_path.read_text())
+            registry_fallback.update({
+                "timestamp":  rpt.get("timestamp"),
+                "best_model": rpt.get("best_model"),
+                "n_features": rpt.get("n_features"),
+                "metrics":    rpt.get("models", {}).get("XGBoost", {}).get("test", {}),
+            })
+        return {**base, "registry": registry_fallback}
 
 
 @app.get("/cache/stats")
