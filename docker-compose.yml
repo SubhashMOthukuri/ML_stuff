@@ -74,6 +74,10 @@ services:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MLFLOW_UI_URL: http://localhost:5000
       # OTLP_ENDPOINT: http://otel-collector:4317
+      GROUND_TRUTH_INGEST_TOKEN: ${GROUND_TRUTH_INGEST_TOKEN:-}   # unset = /ground-truth/ingest disabled (503)
+      VALID_API_KEYS: ${VALID_API_KEYS:-}    # comma-separated; unset = auth disabled (dev default)
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}              # unset = Slack delivery disabled
+      SLACK_CRITICAL_CHANNEL: ${SLACK_CRITICAL_CHANNEL:-}   # e.g. #incidents; unset = webhook default
     volumes:
       - ./models/nyc:/app/models/nyc:ro
       - predictions_data:/app/data          # persist SQLite across restarts

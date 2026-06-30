@@ -1,8 +1,15 @@
 """
-Alert store — writes drift/validation alerts to a JSON file.
+Alert store — writes drift/validation alerts to a JSON file and
+optionally posts to Slack.
 
-Alerts are append-only. The API serves them via GET /alerts.
-In production, replace push() with a Slack/PagerDuty webhook call.
+Severity routing:
+  critical → Slack (immediate ping)
+  warning  → Slack (if SLACK_WEBHOOK_URL set)
+  info     → file only
+
+Set SLACK_WEBHOOK_URL to enable Slack delivery.
+Set SLACK_CRITICAL_CHANNEL to override the channel for critical alerts
+(e.g. #incidents); defaults to whatever the webhook's default channel is.
 """
 
 import json
@@ -16,6 +23,14 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 ALERTS_PATH = Path(os.getenv("ALERTS_FILE", "models/nyc/alerts.json"))
+_SLACK_WEBHOOK_URL      = os.getenv("SLACK_WEBHOOK_URL", "")
+_SLACK_CRITICAL_CHANNEL = os.getenv("SLACK_CRITICAL_CHANNEL", "")
+
+_SEVERITY_EMOJI = {
+    "critical": ":rotating_light:",
+    "warning":  ":warning:",
+    "info":     ":information_source:",
+}
 
 
 class AlertStore:
@@ -46,6 +61,32 @@ class AlertStore:
             "acknowledged": False,
         }
 
+    def _post_slack(self, alert_type: str, message: str, severity: str,
+                    alert_id: str, details: dict) -> None:
+        if not _SLACK_WEBHOOK_URL:
+            return
+        if severity == "info":
+            return
+        try:
+            import requests
+            emoji = _SEVERITY_EMOJI.get(severity, ":bell:")
+            payload: dict = {
+                "text": f"{emoji} *[{severity.upper()}]* `{alert_type}` — {message}",
+                "attachments": [{
+                    "color": "#FF0000" if severity == "critical" else "#FFA500",
+                    "fields": [{"title": k, "value": str(v), "short": True}
+                               for k, v in details.items()],
+                    "footer": f"id:{alert_id} | nyc-airbnb-api",
+                }],
+            }
+            if severity == "critical" and _SLACK_CRITICAL_CHANNEL:
+                payload["channel"] = _SLACK_CRITICAL_CHANNEL
+            resp = requests.post(_SLACK_WEBHOOK_URL, json=payload, timeout=5)
+            if not resp.ok:
+                logger.error("Slack webhook returned %s: %s", resp.status_code, resp.text[:200])
+        except Exception as exc:
+            logger.error("Failed to post Slack alert: %s", exc)
+
     def push(self, alert_type: str, message: str, severity: str = "warning",
              details: dict | None = None) -> str:
         alert_id, entry = self._build_entry(alert_type, message, severity, details)
@@ -54,6 +95,7 @@ class AlertStore:
             alerts.append(entry)
             self._path.write_text(json.dumps(alerts[-500:], indent=2))
         logger.warning("ALERT [%s] %s: %s", severity.upper(), alert_type, message)
+        self._post_slack(alert_type, message, severity, alert_id, details or {})
         return alert_id
 
     def push_once(self, alert_type: str, message: str, severity: str = "warning",
@@ -67,6 +109,7 @@ class AlertStore:
             alerts.append(entry)
             self._path.write_text(json.dumps(alerts[-500:], indent=2))
         logger.warning("ALERT [%s] %s: %s", severity.upper(), alert_type, message)
+        self._post_slack(alert_type, message, severity, alert_id, details or {})
         return alert_id
 
     def get_all(self, limit: int = 100) -> list[dict]:
