@@ -144,6 +144,52 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── Prometheus — metrics store ──────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"      # POST /-/reload to hot-reload config
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Grafana — dashboards ─────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    restart: unless-stopped
+    ports:
+      - "3001:3000"     # browse to http://localhost:3001  (admin / admin)
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
 networks:
   backend:
     driver: bridge
@@ -151,3 +197,5 @@ networks:
 volumes:
   predictions_data:    # named volume — survives container restarts
   mlflow_data:         # MLflow SQLite DB + artifact store
+  prometheus_data:     # Prometheus TSDB (30-day retention)
+  grafana_data:        # Grafana state (dashboards, users, alerts)

@@ -36,6 +36,9 @@ import uuid
 
 import structlog
 from structlog.contextvars import clear_contextvars, bind_contextvars
+
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_fastapi_instrumentator import Instrumentator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List
@@ -56,7 +59,12 @@ _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
 from src.logger_config import setup_logging
-from src.metrics import metrics
+from src.metrics import (
+    metrics,
+    prom_canary_traffic_pct,
+    prom_active_alerts,
+    prom_dlq_size,
+)
 from src.new_york_workflow.nyc_predictor_onnx import NYCAirbnbPredictorONNX
 from src.new_york_workflow.nyc_cache import PredictionCache
 from src.new_york_workflow.nyc_store import RequestStore
@@ -183,6 +191,14 @@ app.add_middleware(
 )
 
 FastAPIInstrumentor.instrument_app(app)
+
+# Prometheus: instrument HTTP request count + latency automatically.
+# We expose /metrics manually below so we can refresh live gauges first.
+_prom_instrumentator = Instrumentator(
+    should_group_status_codes=False,
+    excluded_handlers=["/health.*", "/docs.*", "/openapi.*", "/redoc.*", "/metrics.*"],
+)
+_prom_instrumentator.instrument(app)
 
 
 # ── middleware: request ID + latency + DLQ on 5xx ────────────────────────────
@@ -359,9 +375,23 @@ def liveness():
     return {"alive": True}
 
 
-@app.get("/metrics")
+@app.get("/metrics/summary")
 def get_metrics():
     return metrics.summary()
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics():
+    """Prometheus scrape endpoint — updates live gauges then returns text/plain."""
+    # Refresh gauges from live state right before Prometheus reads them
+    if canary is not None:
+        prom_canary_traffic_pct.set(canary.current_pct if canary.active else 0)
+    if dlq is not None:
+        prom_dlq_size.set(dlq.size() if hasattr(dlq, "size") else 0)
+    alert_stats = alert_store.stats().get("by_severity", {})
+    for sev, count in alert_stats.items():
+        prom_active_alerts.labels(severity=sev).set(count)
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/model-info")
@@ -595,7 +625,7 @@ def predict(listing: ListingFeatures, request: Request):
         if cached:
             span.set_attribute("cache.hit", True)
             store.log_prediction(request_id, raw, cached, cache_hit=True, listing_id=listing_id)
-            metrics.record_prediction(cached["price_usd"])
+            metrics.record_prediction_full(cached["price_usd"], arm="champion", cache_hit=True)
             logger.info("predict | rid=%s CACHE HIT %s → %s", request_id[:8], listing.borough, cached["price_str"])
             return PredictionResponse(
                 **cached,
@@ -631,7 +661,7 @@ def predict(listing: ListingFeatures, request: Request):
         # ── 3. write-through: cache + store ───────────────────────────────
         cache.set(raw, result)
         store.log_prediction(request_id, raw, result, cache_hit=False, listing_id=listing_id)
-        metrics.record_prediction(result["price_usd"])
+        metrics.record_prediction(result["price_usd"])  # in-memory only; prom recorded after routing below
 
         # ── 4. routing: canary → A/B → shadow (priority order) ──────────────
         # Canary and A/B show challenger output to real users.
@@ -686,6 +716,11 @@ def predict(listing: ListingFeatures, request: Request):
         # new model's error rate for POST_PROMOTION_WINDOW_S seconds. If error
         # rate jumps 3× the canary baseline, it auto-reverts files + alerts.
         canary.record_post_promotion(_infer_ms, success=True)
+
+        # Prometheus: record prediction with final arm (known only after routing)
+        from src.metrics import prom_predictions_total, prom_prediction_price_usd
+        prom_predictions_total.labels(arm=routed_arm, cache_hit="false").inc()
+        prom_prediction_price_usd.observe(result["price_usd"])
 
         span.set_attribute("cache.hit",            False)
         span.set_attribute("prediction.price_usd", result["price_usd"])

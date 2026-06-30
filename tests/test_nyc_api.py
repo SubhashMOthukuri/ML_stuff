@@ -101,16 +101,16 @@ class TestHealth:
 
 class TestMetrics:
     def test_metrics_200(self, client):
-        assert client.get("/metrics").status_code == 200
+        assert client.get("/metrics/summary").status_code == 200
 
     def test_metrics_has_uptime(self, client):
-        body = client.get("/metrics").json()
+        body = client.get("/metrics/summary").json()
         assert "uptime_seconds" in body
         assert "uptime_human" in body
         assert body["uptime_seconds"] >= 0
 
     def test_metrics_has_totals(self, client):
-        body = client.get("/metrics").json()
+        body = client.get("/metrics/summary").json()
         assert "totals" in body
         totals = body["totals"]
         assert "requests" in totals
@@ -118,12 +118,12 @@ class TestMetrics:
         assert "error_rate" in totals
 
     def test_metrics_has_endpoints_dict(self, client):
-        body = client.get("/metrics").json()
+        body = client.get("/metrics/summary").json()
         assert "endpoints" in body
         assert isinstance(body["endpoints"], dict)
 
     def test_metrics_has_predictions_block(self, client):
-        body = client.get("/metrics").json()
+        body = client.get("/metrics/summary").json()
         assert "predictions" in body
         preds = body["predictions"]
         assert "total" in preds
@@ -134,7 +134,7 @@ class TestMetrics:
     def test_metrics_endpoint_entry_has_latency(self, client):
         # make a request to /health so there is at least one endpoint entry
         client.get("/health")
-        body = client.get("/metrics").json()
+        body = client.get("/metrics/summary").json()
         assert "/health" in body["endpoints"]
         latency = body["endpoints"]["/health"]["latency_ms"]
         assert "avg" in latency
@@ -144,7 +144,7 @@ class TestMetrics:
 
     def test_metrics_latency_avg_is_positive_after_requests(self, client):
         client.get("/health")
-        body = client.get("/metrics").json()
+        body = client.get("/metrics/summary").json()
         avg = body["endpoints"]["/health"]["latency_ms"]["avg"]
         assert avg is not None
         assert avg > 0
@@ -692,42 +692,42 @@ class TestMetricsTracking:
     """
 
     def test_predict_increments_request_count(self, client, valid_listing):
-        before = client.get("/metrics").json()["endpoints"].get("/predict", {}).get("requests", 0)
+        before = client.get("/metrics/summary").json()["endpoints"].get("/predict", {}).get("requests", 0)
         post_predict(client, valid_listing)
-        after  = client.get("/metrics").json()["endpoints"].get("/predict", {}).get("requests", 0)
+        after  = client.get("/metrics/summary").json()["endpoints"].get("/predict", {}).get("requests", 0)
         assert after == before + 1
 
     def test_prediction_total_increments(self, client, valid_listing):
-        before = client.get("/metrics").json()["predictions"]["total"]
+        before = client.get("/metrics/summary").json()["predictions"]["total"]
         post_predict(client, valid_listing)
-        after  = client.get("/metrics").json()["predictions"]["total"]
+        after  = client.get("/metrics/summary").json()["predictions"]["total"]
         assert after == before + 1
 
     def test_prediction_mean_updates_after_predict(self, client, valid_listing):
         post_predict(client, valid_listing)
-        mean = client.get("/metrics").json()["predictions"]["mean"]
+        mean = client.get("/metrics/summary").json()["predictions"]["mean"]
         assert mean is not None
         assert mean > 0  # prediction values are USD prices
 
     def test_batch_increments_prediction_total_by_n(self, client, valid_listing):
         brooklyn = with_override(valid_listing, borough="Brooklyn", latitude=40.68, longitude=-73.94)
-        before = client.get("/metrics").json()["predictions"]["total"]
+        before = client.get("/metrics/summary").json()["predictions"]["total"]
         client.post("/predict-batch", json=[valid_listing, brooklyn])
-        after  = client.get("/metrics").json()["predictions"]["total"]
+        after  = client.get("/metrics/summary").json()["predictions"]["total"]
         assert after == before + 2
 
     def test_error_count_increments_on_invalid_request(self, client, valid_listing):
         # 422 (Pydantic / predictor ValueError) are NOT counted as errors by the middleware —
         # only HTTP 5xx increments the error counter. A 422 is a client error, not a server error.
         # So we verify the error counter does NOT change on a validation failure.
-        before_errs = client.get("/metrics").json()["endpoints"].get("/predict", {}).get("errors", 0)
+        before_errs = client.get("/metrics/summary").json()["endpoints"].get("/predict", {}).get("errors", 0)
         post_predict(client, with_override(valid_listing, borough="Narnia"))  # → 422, not a server error
-        after_errs  = client.get("/metrics").json()["endpoints"].get("/predict", {}).get("errors", 0)
+        after_errs  = client.get("/metrics/summary").json()["endpoints"].get("/predict", {}).get("errors", 0)
         assert after_errs == before_errs  # counter unchanged — 422 ≠ server error
 
     def test_predict_latency_recorded_after_request(self, client, valid_listing):
         post_predict(client, valid_listing)
-        latency = client.get("/metrics").json()["endpoints"]["/predict"]["latency_ms"]
+        latency = client.get("/metrics/summary").json()["endpoints"]["/predict"]["latency_ms"]
         assert latency["avg"] is not None
         assert latency["avg"] > 0
         assert latency["min"] is not None
@@ -737,20 +737,20 @@ class TestMetricsTracking:
         """p95 requires at least 20 samples — fire 20 /health calls to ensure it."""
         for _ in range(20):
             client.get("/health")
-        p95 = client.get("/metrics").json()["endpoints"]["/health"]["latency_ms"]["p95"]
+        p95 = client.get("/metrics/summary").json()["endpoints"]["/health"]["latency_ms"]["p95"]
         assert p95 is not None
         assert p95 > 0
 
     def test_health_total_requests_increases(self, client):
-        before = client.get("/metrics").json()["totals"]["requests"]
+        before = client.get("/metrics/summary").json()["totals"]["requests"]
         client.get("/health")
         client.get("/health")
-        after  = client.get("/metrics").json()["totals"]["requests"]
+        after  = client.get("/metrics/summary").json()["totals"]["requests"]
         assert after >= before + 2
 
     def test_prediction_min_is_set_after_predict(self, client, valid_listing):
         post_predict(client, valid_listing)
-        preds = client.get("/metrics").json()["predictions"]
+        preds = client.get("/metrics/summary").json()["predictions"]
         assert preds["min"] is not None
         assert preds["max"] is not None
         assert preds["max"] >= preds["min"]
@@ -940,3 +940,35 @@ class TestSlackAlerts:
                 assert id1 is not None
                 assert id2 is None           # suppressed
                 mock_post.assert_called_once()  # Slack only fired once
+
+
+class TestPrometheusMetrics:
+    def test_prometheus_endpoint_200(self, client):
+        assert client.get("/metrics").status_code == 200
+
+    def test_prometheus_content_type(self, client):
+        r = client.get("/metrics")
+        assert "text/plain" in r.headers["content-type"]
+
+    def test_prometheus_has_http_requests_total(self, client):
+        client.get("/health")
+        body = client.get("/metrics").text
+        assert "http_requests_total" in body
+
+    def test_prometheus_has_nyc_predictions(self, client, valid_listing):
+        client.post("/predict", json=valid_listing)
+        body = client.get("/metrics").text
+        assert "nyc_predictions_total" in body
+
+    def test_prometheus_has_nyc_price_histogram(self, client, valid_listing):
+        client.post("/predict", json=valid_listing)
+        body = client.get("/metrics").text
+        assert "nyc_prediction_price_usd" in body
+
+    def test_prometheus_has_canary_gauge(self, client):
+        body = client.get("/metrics").text
+        assert "nyc_canary_traffic_pct" in body
+
+    def test_prometheus_has_dlq_gauge(self, client):
+        body = client.get("/metrics").text
+        assert "nyc_dlq_size" in body

@@ -1,38 +1,71 @@
 """
-In-memory runtime metrics for the prediction API.
+Runtime metrics — dual-track:
 
-Tracks per-endpoint request counts, error counts, latency, and prediction
-value distribution. Thread-safe via a single lock.
+  1. In-memory store  → served as JSON via GET /metrics/summary
+  2. prometheus_client → scraped as Prometheus text via GET /metrics
+                         → Prometheus → Grafana dashboards
 
-For production at scale swap this for prometheus-fastapi-instrumentator —
-the /metrics response shape stays the same so dashboards don't change.
+Custom ML metrics exposed to Prometheus:
+  nyc_predictions_total          counter  {arm, cache_hit}
+  nyc_prediction_price_usd       histogram
+  nyc_canary_traffic_pct         gauge
+  nyc_active_alerts              gauge    {severity}
+  nyc_dlq_size                   gauge
 """
 
 import threading
 import time
 from collections import defaultdict
 
+from prometheus_client import Counter, Gauge, Histogram
+
+# ── Prometheus metric objects (module-level singletons) ───────────────────────
+
+prom_predictions_total = Counter(
+    "nyc_predictions_total",
+    "Total predictions served",
+    ["arm", "cache_hit"],
+)
+
+prom_prediction_price_usd = Histogram(
+    "nyc_prediction_price_usd",
+    "Predicted nightly price in USD",
+    buckets=[50, 75, 100, 150, 200, 300, 500, 750, 1000, 2000],
+)
+
+prom_canary_traffic_pct = Gauge(
+    "nyc_canary_traffic_pct",
+    "Current canary traffic percentage (0–100)",
+)
+
+prom_active_alerts = Gauge(
+    "nyc_active_alerts",
+    "Unacknowledged alerts by severity",
+    ["severity"],
+)
+
+prom_dlq_size = Gauge(
+    "nyc_dlq_size",
+    "Dead letter queue depth",
+)
+
+
+# ── In-memory store (JSON /metrics/summary) ───────────────────────────────────
 
 class _Metrics:
     def __init__(self):
         self._lock = threading.Lock()
         self._start_time = time.time()
 
-        # per-endpoint counters
-        self._requests: dict[str, int] = defaultdict(int)
-        self._errors:   dict[str, int] = defaultdict(int)
-
-        # per-endpoint latency (ms) — keep last 1000 samples per endpoint
+        self._requests: dict[str, int]          = defaultdict(int)
+        self._errors:   dict[str, int]          = defaultdict(int)
         self._latencies: dict[str, list[float]] = defaultdict(list)
         self._MAX_SAMPLES = 1000
 
-        # prediction value distribution (all endpoints combined)
         self._pred_count = 0
         self._pred_sum   = 0.0
         self._pred_min   = float("inf")
         self._pred_max   = float("-inf")
-
-    # ------------------------------------------------------------------ writes
 
     def record_request(self, endpoint: str) -> None:
         with self._lock:
@@ -49,24 +82,30 @@ class _Metrics:
             if len(samples) > self._MAX_SAMPLES:
                 samples.pop(0)
 
-    def record_prediction(self, value: float) -> None:
+    def record_prediction(self, price_usd: float) -> None:
+        """Update in-memory prediction stats (JSON summary only)."""
         with self._lock:
             self._pred_count += 1
-            self._pred_sum   += value
-            if value < self._pred_min:
-                self._pred_min = value
-            if value > self._pred_max:
-                self._pred_max = value
+            self._pred_sum   += price_usd
+            if price_usd < self._pred_min:
+                self._pred_min = price_usd
+            if price_usd > self._pred_max:
+                self._pred_max = price_usd
 
-    # ------------------------------------------------------------------ reads
+    def record_prediction_full(self, price_usd: float, arm: str, cache_hit: bool) -> None:
+        """Update both in-memory stats and Prometheus metrics."""
+        self.record_prediction(price_usd)
+        prom_predictions_total.labels(
+            arm=arm, cache_hit="true" if cache_hit else "false"
+        ).inc()
+        prom_prediction_price_usd.observe(price_usd)
 
     def summary(self) -> dict:
         with self._lock:
             uptime_s = time.time() - self._start_time
 
             endpoint_stats = {}
-            all_endpoints = set(self._requests) | set(self._errors)
-            for ep in all_endpoints:
+            for ep in set(self._requests) | set(self._errors):
                 reqs = self._requests[ep]
                 errs = self._errors[ep]
                 lats = self._latencies[ep]
@@ -83,10 +122,10 @@ class _Metrics:
                 }
 
             pred_stats = {
-                "total":   self._pred_count,
-                "mean":    round(self._pred_sum / self._pred_count, 4) if self._pred_count else None,
-                "min":     round(self._pred_min, 4) if self._pred_count else None,
-                "max":     round(self._pred_max, 4) if self._pred_count else None,
+                "total": self._pred_count,
+                "mean":  round(self._pred_sum / self._pred_count, 4) if self._pred_count else None,
+                "min":   round(self._pred_min, 4) if self._pred_count else None,
+                "max":   round(self._pred_max, 4) if self._pred_count else None,
             }
 
             total_requests = sum(self._requests.values())
@@ -111,5 +150,4 @@ def _fmt_uptime(seconds: float) -> str:
     return f"{h}h {m}m {s}s"
 
 
-# module-level singleton — import this everywhere
 metrics = _Metrics()
