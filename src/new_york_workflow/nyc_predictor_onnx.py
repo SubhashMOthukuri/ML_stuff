@@ -208,7 +208,8 @@ class NYCAirbnbPredictorONNX:
         r["host_density"]             = r["host_listings_count"] / r["accommodates"]
 
         scores = [r[c] for c in REVIEW_SCORE_COLS]
-        r["review_score_std"] = float(np.std(scores)) if any(s > 0 for s in scores) else 0.0
+        # ddof=1 matches pandas DataFrame.std(axis=1) used at training time
+        r["review_score_std"] = float(np.std(scores, ddof=1)) if any(s > 0 for s in scores) else 0.0
 
         r["dist_from_midtown"] = np.sqrt(
             (r["latitude"]  - MIDTOWN_LAT) ** 2 +
