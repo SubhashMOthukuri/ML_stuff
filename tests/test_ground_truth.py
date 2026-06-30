@@ -440,8 +440,8 @@ class TestFetchGroundTruthRun:
             list(range(30)), [500] * 30
         )
 
-        baseline = {"model_metrics": {"mae_dollar": 57.62, "r2": 0.82, "mape_pct": 23.6}}
-        baseline_path = tmp_path / "models" / "nyc" / "baseline_stats.json"
+        baseline = {"models": {"XGBoost": {"test": {"mae_dollar": 57.62, "r2": 0.82, "mape": 23.6}}}}
+        baseline_path = tmp_path / "models" / "nyc" / "nyc_training_report.json"
         baseline_path.parent.mkdir(parents=True)
         baseline_path.write_text(json.dumps(baseline))
 
@@ -464,8 +464,8 @@ class TestFetchGroundTruthRun:
         # prediction=$100, actual=$105 → MAE=$5 (well within $10 threshold)
         snapshot = self._make_snapshot(list(range(30)), [105] * 30)
 
-        baseline = {"model_metrics": {"mae_dollar": 57.62, "r2": 0.82, "mape_pct": 23.6}}
-        baseline_path = tmp_path / "models" / "nyc" / "baseline_stats.json"
+        baseline = {"models": {"XGBoost": {"test": {"mae_dollar": 57.62, "r2": 0.82, "mape": 23.6}}}}
+        baseline_path = tmp_path / "models" / "nyc" / "nyc_training_report.json"
         baseline_path.parent.mkdir(parents=True)
         baseline_path.write_text(json.dumps(baseline))
 

@@ -95,11 +95,12 @@ dlq:          DeadLetterQueue        = None
 drift:        DriftMonitor           = None
 shadow:       ShadowPredictor        = None
 ground_truth: GroundTruthStore       = None
+_r2_test:     float                  = 0.0
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global predictor, cache, store, dlq, drift, shadow, ground_truth
+    global predictor, cache, store, dlq, drift, shadow, ground_truth, _r2_test
 
     logger.info("Startup — initialising services")
     predictor    = NYCAirbnbPredictorONNX()
@@ -111,7 +112,8 @@ async def lifespan(app: FastAPI):
     ground_truth = GroundTruthStore()
     shadow.inject_champion(predictor)   # share _engineer() + feature_list + scaler
 
-    info = predictor.model_info()
+    info     = predictor.model_info()
+    _r2_test = info["r2_test"]
     logger.info(
         "Ready | backend=%s  R²=%.4f  cache=%s  store=%s  dlq=%s  shadow=%s",
         info["inference_backend"], info["r2_test"],
@@ -431,9 +433,10 @@ def ground_truth_stats():
     baseline_mae = None
     try:
         import json as _json
-        bp = _ROOT / "models" / "nyc" / "baseline_stats.json"
+        bp = _ROOT / "models" / "nyc" / "nyc_training_report.json"
         if bp.exists():
-            baseline_mae = _json.loads(bp.read_text()).get("model_metrics", {}).get("mae_dollar")
+            rpt = _json.loads(bp.read_text())
+            baseline_mae = rpt.get("models", {}).get("XGBoost", {}).get("test", {}).get("mae_dollar")
     except Exception:
         pass
 
@@ -500,7 +503,7 @@ def predict(listing: ListingFeatures, request: Request):
             return PredictionResponse(
                 **cached,
                 model      = "XGBoost (ONNX Runtime)",
-                r2_test    = 0.8241,
+                r2_test    = _r2_test,
                 request_id = request_id,
                 cache_hit  = True,
             )
@@ -551,7 +554,7 @@ def predict(listing: ListingFeatures, request: Request):
         return PredictionResponse(
             **result,
             model      = "XGBoost (ONNX Runtime)",
-            r2_test    = 0.8241,
+            r2_test    = _r2_test,
             request_id = request_id,
             cache_hit  = False,
         )
@@ -569,17 +572,18 @@ def predict_batch(listings: List[ListingFeatures], request: Request):
         span.set_attribute("batch.size", len(listings))
         results = []
         for i, listing in enumerate(listings):
-            raw    = listing.model_dump()
+            lid = listing.listing_id
+            raw = listing.model_dump(exclude={"listing_id"})
             cached = cache.get(raw)
             if cached:
                 results.append({"index": i, **cached, "cache_hit": True, "error": None})
-                store.log_prediction(f"{request_id}:{i}", raw, cached, cache_hit=True)
+                store.log_prediction(f"{request_id}:{i}", raw, cached, cache_hit=True, listing_id=lid)
                 metrics.record_prediction(cached["price_usd"])
             else:
                 try:
                     result = predictor.predict_raw(raw)
                     cache.set(raw, result)
-                    store.log_prediction(f"{request_id}:{i}", raw, result, cache_hit=False)
+                    store.log_prediction(f"{request_id}:{i}", raw, result, cache_hit=False, listing_id=lid)
                     metrics.record_prediction(result["price_usd"])
                     results.append({"index": i, **result, "cache_hit": False, "error": None})
                 except Exception as exc:

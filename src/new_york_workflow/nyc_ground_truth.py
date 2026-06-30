@@ -165,5 +165,3 @@ class GroundTruthStore:
         return {k: {"count": v, "pct": round(v / n * 100, 1)} for k, v in buckets.items()}
 
 
-# module-level singleton
-ground_truth_store = GroundTruthStore()

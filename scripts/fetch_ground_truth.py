@@ -132,10 +132,10 @@ def run(url: str, dry_run: bool = False) -> dict:
     production_mae = stats.get("mae_dollar")
 
     if production_mae is not None and stats["n_evaluated"] >= 30:
-        baseline_path = BASE_DIR / "models" / "nyc" / "baseline_stats.json"
+        baseline_path = BASE_DIR / "models" / "nyc" / "nyc_training_report.json"
         if baseline_path.exists():
-            baseline = json.loads(baseline_path.read_text())
-            training_mae = baseline.get("model_metrics", {}).get("mae_dollar")
+            baseline     = json.loads(baseline_path.read_text())
+            training_mae = baseline.get("models", {}).get("XGBoost", {}).get("test", {}).get("mae_dollar")
             if training_mae:
                 drift = production_mae - training_mae
                 logger.info(
