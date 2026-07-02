@@ -1,0 +1,22 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+
+scrape_configs:
+
+  # NYC Airbnb API — custom ML metrics + HTTP instrumentation
+  - job_name: nyc-api
+    static_configs:
+      - targets: ['api:8001']
+    metrics_path: /metrics
+
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Fluent Bit metrics (optional — exposes its own prom metrics on :2020)
+  - job_name: fluent-bit
+    static_configs:
+      - targets: ['fluent-bit:2020']
+    metrics_path: /api/v1/metrics/prometheus
