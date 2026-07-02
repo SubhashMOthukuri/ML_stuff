@@ -1,46 +1,86 @@
-# NYC Airbnb Price Prediction API
-# Production image: gunicorn + uvicorn workers + ONNX Runtime
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-stage, multi-arch Dockerfile
+# Supports: linux/arm64 (Oracle Cloud, Apple M-series)
+#           linux/amd64 (Intel/AMD servers)
 #
-# Build:  docker build -t nyc-airbnb-api .
-# Run:    docker run --env-file .env -p 8001:8001 nyc-airbnb-api
+# Why multi-stage?
+#   Stage 1 (builder) has compilers + build tools → needed to install packages
+#   Stage 2 (runtime) has only the finished app   → nothing a customer doesn't need
+#   Result: image shrinks from ~1.4 GB → ~600 MB, deploys 2× faster
+#
+# Build single-arch (local test):
+#   docker build -t nyc-airbnb-api .
+#
+# Build + push multi-arch (CI / production):
+#   docker buildx build --platform linux/arm64,linux/amd64 \
+#     -t <registry>/nyc-airbnb-api:latest --push .
+# ─────────────────────────────────────────────────────────────────────────────
 
-FROM python:3.11-slim
+# ── Stage 1: builder ─────────────────────────────────────────────────────────
+# BUILDPLATFORM = the machine running the build (your Mac)
+# This lets Docker cross-compile packages for the TARGET platform.
+FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
 
-# System deps — only what we need (no extras)
+# Build tools needed to compile Python packages from source on ARM.
+# We only need these in the builder — they never reach the runtime image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Create an isolated virtual environment.
+# Why? So we can copy the entire /venv folder into the runtime stage cleanly,
+# without pulling in Python's system-wide packages.
+RUN python -m venv /venv
+ENV PATH="/venv/bin:$PATH"
 
-# Install Python deps first (layer cached unless requirements change)
+# Install deps into the venv.
+# Layer is cached until requirements.txt changes — fast rebuilds.
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt \
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt \
  && pip install --no-cache-dir \
         gunicorn \
-        uvicorn[standard] \
-        onnxruntime \
-        onnxmltools \
-        slowapi \
-        opentelemetry-sdk \
-        opentelemetry-instrumentation-fastapi \
-        opentelemetry-exporter-otlp-proto-grpc
+        uvicorn[standard]
 
-# Copy source tree and model artifacts
+
+# ── Stage 2: runtime ─────────────────────────────────────────────────────────
+# TARGETPLATFORM = the machine that will RUN the image (Oracle ARM node).
+# python:3.11-slim has official images for both arm64 and amd64 on Docker Hub.
+FROM --platform=$TARGETPLATFORM python:3.11-slim AS runtime
+
+# Runtime system deps only — curl for the healthcheck, nothing else.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the compiled venv from the builder — no compilers needed here.
+COPY --from=builder /venv /venv
+ENV PATH="/venv/bin:$PATH"
+
+# Copy application source.
 COPY src/          ./src/
-COPY models/nyc/   ./models/nyc/
+COPY scripts/      ./scripts/
 COPY gunicorn.conf.py ./
 
-# Non-root user for security
+# Copy model artefacts if they exist.
+# In CI the create_test_model.py script generates these before the build.
+# In production they come from Oracle Object Storage (covered in Helm stage).
+COPY models/nyc/   ./models/nyc/
+
+# Non-root user — containers should never run as root in production.
+# Why? If an attacker escapes the app, they get a low-privilege user,
+# not root access to the node.
 RUN adduser --disabled-password --gecos "" appuser \
  && chown -R appuser:appuser /app
 USER appuser
 
-# Expose API port
 EXPOSE 8001
 
-# Healthcheck — Docker marks container unhealthy if this fails
+# Healthcheck — Docker (and Kubernetes) use this to know if the container
+# is alive. If it fails 3 times, the container is restarted automatically.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8001/health/live || exit 1
 

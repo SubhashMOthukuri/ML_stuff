@@ -25,4 +25,14 @@ data/shadow_comparisons.db
 # MLflow — local tracking store (use MLFLOW_TRACKING_URI for remote)
 mlruns/
 mlartifacts/
-mlflow.dbload-tests/results/
+mlflow.db
+
+# Load test results
+load-tests/results/
+
+# Terraform — state files contain sensitive resource IDs, tfvars has account OCIDs
+infra/terraform/.terraform/
+infra/terraform/.terraform.lock.hcl
+infra/terraform/terraform.tfstate
+infra/terraform/terraform.tfstate.backup
+infra/terraform/terraform.tfvars
