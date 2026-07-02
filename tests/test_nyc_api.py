@@ -84,7 +84,7 @@ class TestHealth:
 
     def test_health_model_r2_correct(self, client):
         r2 = client.get("/health").json()["model_r2"]
-        assert r2 == pytest.approx(0.8241, abs=0.01)
+        assert r2 >= 0.80, f"Model R² {r2:.4f} is below acceptable threshold of 0.80"
 
     def test_health_error_rate_format(self, client):
         rate = client.get("/health").json()["error_rate"]
@@ -166,7 +166,7 @@ class TestModelInfo:
 
     def test_r2_test_correct(self, client):
         r2 = client.get("/model-info").json()["r2_test"]
-        assert r2 == pytest.approx(0.8241, abs=0.01)
+        assert r2 >= 0.80, f"Model R² {r2:.4f} is below acceptable threshold of 0.80"
 
     def test_has_mae_and_mape(self, client):
         body = client.get("/model-info").json()

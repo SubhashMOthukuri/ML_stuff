@@ -25,4 +25,4 @@ data/shadow_comparisons.db
 # MLflow — local tracking store (use MLFLOW_TRACKING_URI for remote)
 mlruns/
 mlartifacts/
-mlflow.db
+mlflow.dbload-tests/results/

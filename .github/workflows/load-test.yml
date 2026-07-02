@@ -1,0 +1,157 @@
+name: Load Test
+
+# When this runs:
+#   - On every push to main that touches the API or routing logic
+#   - Manually via GitHub UI (workflow_dispatch) with optional VU count
+#
+# Learning note:
+#   We do NOT run on every PR push — load tests take 60s and need a live server.
+#   We scope the path filter to files that could introduce a latency regression
+#   or concurrency bug. Config-only changes don't need a load test.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/new_york_workflow/nyc_api.py"
+      - "src/new_york_workflow/nyc_canary.py"
+      - "src/new_york_workflow/nyc_ab.py"
+      - "src/new_york_workflow/nyc_shadow.py"
+      - "src/new_york_workflow/nyc_predictor_onnx.py"
+      - "src/metrics.py"
+      - "scripts/retrain.py"
+  workflow_dispatch:
+    inputs:
+      vus:
+        description: "Virtual users (concurrent load)"
+        required: false
+        default: "20"
+      duration:
+        description: "Hold duration (e.g. 30s, 1m)"
+        required: false
+        default: "30s"
+
+jobs:
+  load-test:
+    name: k6 smoke test (${{ github.event.inputs.vus || '20' }} VUs)
+    runs-on: ubuntu-latest
+
+    # Redis runs as a sidecar service — same as production
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      # ── 1. Code ─────────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+
+      # ── 2. Python ───────────────────────────────────────────────────────────
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ── 3. Create test model artefacts ──────────────────────────────────────
+      # models/ is gitignored so CI never has a pre-trained model.
+      # create_test_model.py builds a minimal but structurally correct ONNX
+      # model in < 10 s. Predictions will be nonsense ($50-$300 random range)
+      # but the API behaviour, middleware, routing, and caching are all real.
+      - name: Create test model artefacts
+        run: python scripts/create_test_model.py
+        env:
+          PYTHONPATH: .
+
+      # ── 4. Start API ─────────────────────────────────────────────────────────
+      # We start uvicorn directly (not docker-compose) to avoid needing Docker
+      # layer caching. The &  sends it to background; the loop waits until the
+      # /health/live endpoint returns 200 (up to 30 s before failing).
+      - name: Start API server
+        run: |
+          uvicorn src.new_york_workflow.nyc_api:app \
+            --host 0.0.0.0 --port 8001 --workers 4 &
+          echo "Waiting for API to become healthy…"
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8001/health/live > /dev/null 2>&1; then
+              echo "API ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://localhost:8001/health/live || (echo "API never came up" && exit 1)
+        env:
+          PYTHONPATH: .
+          REDIS_HOST: localhost
+          REDIS_PORT: "6379"
+          VALID_API_KEYS: ci-load-test-key
+          LOG_FORMAT: json
+          LOG_LEVEL: warning     # reduce noise; k6 output is what matters
+          PREDICTION_DB: /tmp/predictions.db
+
+      # ── 5. Install k6 ───────────────────────────────────────────────────────
+      # We pin to a specific version for reproducible CI results.
+      # k6 is a single static binary — no package manager needed.
+      - name: Install k6
+        run: |
+          K6_VERSION="v0.51.0"
+          curl -sL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" \
+            | tar xz --strip-components=1
+          sudo mv k6 /usr/local/bin/k6
+          k6 version
+
+      # ── 6. Run load test ─────────────────────────────────────────────────────
+      # k6 exits non-zero if any threshold is breached → fails the CI step.
+      # We override stages via env vars so workflow_dispatch inputs work.
+      - name: Run k6 smoke test
+        run: |
+          mkdir -p load-tests/results
+          k6 run load-tests/smoke.js \
+            --env K6_API_URL=http://localhost:8001 \
+            --env K6_API_KEY=ci-load-test-key \
+            --stage "10s:${{ github.event.inputs.vus || '20' }}" \
+            --stage "${{ github.event.inputs.duration || '30s' }}:${{ github.event.inputs.vus || '20' }}" \
+            --stage "10s:0" \
+            --out json=load-tests/results/raw.json
+
+      # ── 7. Upload results ────────────────────────────────────────────────────
+      # The summary.json written by handleSummary() and the raw JSONL from --out
+      # are both uploaded so you can download and inspect them from GitHub UI.
+      - name: Upload load test results
+        if: always()    # upload even if thresholds failed — you want to see why
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results-${{ github.run_id }}
+          path: load-tests/results/
+          retention-days: 14
+
+      # ── 8. Print summary to CI log ───────────────────────────────────────────
+      - name: Print summary
+        if: always()
+        run: |
+          if [ -f load-tests/results/summary.json ]; then
+            python - <<'EOF'
+          import json, sys
+          d = json.load(open("load-tests/results/summary.json"))
+          m = d.get("metrics", {})
+          dur  = m.get("http_req_duration", {}).get("values", {})
+          reqs = m.get("http_reqs", {}).get("values", {})
+          fail = m.get("http_req_failed", {}).get("values", {})
+          print(f"\n{'─'*54}")
+          print(f"  Requests total  : {reqs.get('count', '?')}")
+          print(f"  Throughput      : {reqs.get('rate', 0):.1f} req/s")
+          print(f"  p50 latency     : {dur.get('p(50)', 0):.1f} ms")
+          print(f"  p95 latency     : {dur.get('p(95)', 0):.1f} ms")
+          print(f"  p99 latency     : {dur.get('p(99)', 0):.1f} ms")
+          print(f"  Error rate      : {fail.get('rate', 0)*100:.2f}%")
+          print(f"{'─'*54}\n")
+          EOF
+          fi
