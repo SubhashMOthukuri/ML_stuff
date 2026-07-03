@@ -102,7 +102,6 @@ tracer = _setup_tracing()
 limiter = Limiter(key_func=get_remote_address, default_limits=[settings.rate_limit])
 
 # ── API key auth ──────────────────────────────────────────────────────────────
-VALID_API_KEYS: frozenset[str] = settings.api_keys_set
 
 _AUTH_EXEMPT_PREFIXES = ("/health", "/docs", "/openapi.json", "/redoc", "/")
 
@@ -176,7 +175,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=settings.cors_origins_list,
     allow_methods=["*"],
     allow_headers=["*", "X-Request-ID"],
     expose_headers=["X-Request-ID"],
@@ -238,8 +237,9 @@ async def observe(request: Request, call_next) -> Response:
 @app.middleware("http")
 async def api_key_auth(request: Request, call_next) -> Response:
     path = request.url.path
+    api_keys = settings.api_keys_set
     exempt = (
-        not VALID_API_KEYS
+        not api_keys
         or path == "/"
         or path.startswith("/health")
         or path.startswith("/docs")
@@ -248,7 +248,7 @@ async def api_key_auth(request: Request, call_next) -> Response:
     )
     if exempt:
         return await call_next(request)
-    if request.headers.get("X-API-Key", "") not in VALID_API_KEYS:
+    if request.headers.get("X-API-Key", "") not in api_keys:
         return Response(
             content='{"detail":"Invalid or missing X-API-Key header"}',
             status_code=401,

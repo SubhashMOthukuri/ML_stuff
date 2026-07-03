@@ -23,10 +23,6 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-ALERTS_PATH             = settings.alerts_file
-_SLACK_WEBHOOK_URL      = settings.slack_webhook_url
-_SLACK_CRITICAL_CHANNEL = settings.slack_critical_channel
-
 _SEVERITY_EMOJI = {
     "critical": ":rotating_light:",
     "warning":  ":warning:",
@@ -37,8 +33,8 @@ _SEVERITY_EMOJI = {
 class AlertStore:
     _lock = threading.Lock()
 
-    def __init__(self, path: Path = ALERTS_PATH):
-        self._path = Path(path)
+    def __init__(self, path: Path | None = None):
+        self._path = Path(path or settings.alerts_file)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         if not self._path.exists():
             self._path.write_text(json.dumps([]))
@@ -64,7 +60,9 @@ class AlertStore:
 
     def _post_slack(self, alert_type: str, message: str, severity: str,
                     alert_id: str, details: dict) -> None:
-        if not _SLACK_WEBHOOK_URL:
+        webhook_url      = settings.slack_webhook_url
+        critical_channel = settings.slack_critical_channel
+        if not webhook_url:
             return
         if severity == "info":
             return
@@ -80,9 +78,9 @@ class AlertStore:
                     "footer": f"id:{alert_id} | nyc-airbnb-api",
                 }],
             }
-            if severity == "critical" and _SLACK_CRITICAL_CHANNEL:
-                payload["channel"] = _SLACK_CRITICAL_CHANNEL
-            resp = requests.post(_SLACK_WEBHOOK_URL, json=payload, timeout=5)
+            if severity == "critical" and critical_channel:
+                payload["channel"] = critical_channel
+            resp = requests.post(webhook_url, json=payload, timeout=5)
             if not resp.ok:
                 logger.error("Slack webhook returned %s: %s", resp.status_code, resp.text[:200])
         except Exception as exc:

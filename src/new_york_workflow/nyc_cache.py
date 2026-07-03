@@ -61,11 +61,11 @@ class PredictionCache:
             self._misses += 1
             return None
 
-    def set(self, raw: dict, result: dict, ttl: int = settings.cache_ttl_seconds) -> None:
+    def set(self, raw: dict, result: dict, ttl: int | None = None) -> None:
         if not self._client:
             return
         try:
-            self._client.setex(self._key(raw), ttl, json.dumps(result))
+            self._client.setex(self._key(raw), ttl or settings.cache_ttl_seconds, json.dumps(result))
         except Exception:
             pass
 
