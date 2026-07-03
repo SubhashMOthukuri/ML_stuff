@@ -210,7 +210,7 @@ export default function () {
   });
   check(batch, {
     'batch 200':            (r) => r.status === 200,
-    'batch has 3 results':  (r) => JSON.parse(r.body).predictions?.length === 3,
+    'batch has 3 results':  (r) => { var p = JSON.parse(r.body).predictions; return p && p.length === 3; },
   });
   errorRate.add(batch.status !== 200);
 
