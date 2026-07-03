@@ -133,8 +133,18 @@ const LISTING_BROOKLYN = JSON.stringify({
 const BATCH_PAYLOAD = JSON.stringify([
   JSON.parse(LISTING_MANHATTAN),
   JSON.parse(LISTING_BROOKLYN),
-  { ...JSON.parse(LISTING_MANHATTAN), borough: 'Queens',
-    neighbourhood: 'Astoria', latitude: 40.7722, longitude: -73.9301 },
+  { accommodates: 2, bedrooms: 1.0, bathrooms: 1.0,
+    is_private_bath: true, room_type: 'Entire home/apt',
+    borough: 'Queens', neighbourhood: 'Astoria',
+    latitude: 40.7722, longitude: -73.9301,
+    minimum_nights: 2, host_is_superhost: false, host_listings_count: 1,
+    number_of_reviews: 30, number_of_reviews_ltm: 10, reviews_per_month: 1.2,
+    review_scores_rating: 4.8, review_scores_accuracy: 4.9,
+    review_scores_cleanliness: 4.7, review_scores_checkin: 4.9,
+    review_scores_communication: 5.0, review_scores_location: 4.9,
+    review_scores_value: 4.6, amenity_count: 30,
+    has_gym: false, has_elevator: true, has_dryer: true,
+    has_air_conditioning: true, has_washer: true, has_pool: false },
 ]);
 
 // ── VU loop ──────────────────────────────────────────────────────────────────
