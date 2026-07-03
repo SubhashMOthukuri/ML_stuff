@@ -153,6 +153,8 @@ Each secret has a name (what your app calls it) and a value (the actual password
 | `REDIS_PASSWORD` | Password for Redis cache | `ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaakve26ayamrkfaij4st6amckemxzeau2evcihk2c5y55xzeqeyuca` |
 | `VALID_API_KEYS` | API keys clients use to call our API | `ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaakve26ayaaed4oxukns2lufos5cwkwpopez56b4eitmaenr2fml3a` |
 | `SLACK_WEBHOOK_URL` | Webhook URL for Slack alerts | `ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaakve26ayapsry5l7dg4ottdmdddf6dayvaoxtoggzrm4duk2gmmna` |
+| `DD_API_KEY` | Datadog API key (placeholder — using Grafana stack instead) | `ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaakve26ayabw43afqvw2dscibbxudy3tocsj2xsbcerbtkldqmn2wq` |
+| `GROUND_TRUTH_INGEST_TOKEN` | Shared secret for POST /ground-truth/ingest | `ocid1.vaultsecret.oc1.us-chicago-1.amaaaaaakve26ayaln6kcqpxxxjrvnbuues24ssjfcle3l7d5wbtfh5xfhfa` |
 
 **Why base64 encoding?**
 Oracle Vault stores secrets as base64-encoded strings.

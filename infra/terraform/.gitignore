@@ -1,0 +1,13 @@
+# Terraform state — contains all resource IDs after apply, never commit
+terraform.tfstate
+terraform.tfstate.backup
+
+# Provider plugins — downloaded by terraform init, large binaries
+.terraform/
+.terraform.lock.hcl
+
+# Account-specific values
+terraform.tfvars
+
+# Kubeconfig — saved here after apply, contains cluster credentials
+kubeconfig
