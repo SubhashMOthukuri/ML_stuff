@@ -1,5 +1,5 @@
 /**
- * k6 smoke + load test — NYC Airbnb Price Prediction API
+ * k6 smoke + load test  —  NYC Airbnb Price Prediction API
  *
  * What k6 is:
  *   A Go-based load testing tool. You write test scripts in JavaScript,

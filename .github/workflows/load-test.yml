@@ -21,6 +21,7 @@ on:
       - "src/metrics.py"
       - "scripts/retrain.py"
       - "requirements.txt"
+      - "load-tests/smoke.js"
   workflow_dispatch:
     inputs:
       vus:
