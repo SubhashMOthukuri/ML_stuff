@@ -241,7 +241,7 @@ export function handleSummary(data) {
   if (dur && reqs) {
     console.log(`  Total requests : ${reqs.values.count}`);
     console.log(`  Req/s          : ${reqs.values.rate.toFixed(1)}`);
-    console.log(`  p50 latency    : ${dur.values['p(50)'].toFixed(1)} ms`);
+    console.log(`  p50 latency    : ${dur.values['med'].toFixed(1)} ms`);
     console.log(`  p95 latency    : ${dur.values['p(95)'].toFixed(1)} ms`);
     console.log(`  p99 latency    : ${(dur.values['p(99)'] || 0).toFixed(1)} ms`);
   }

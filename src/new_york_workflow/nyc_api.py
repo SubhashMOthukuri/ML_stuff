@@ -734,7 +734,7 @@ def predict(listing: ListingFeatures, request: Request):
 
 
 @app.post("/predict-batch")
-@limiter.limit("20/minute")
+@limiter.limit(settings.rate_limit)
 def predict_batch(listings: List[ListingFeatures], request: Request):
     """Batch predict up to 100 listings. Stricter rate limit: 20/minute."""
     if len(listings) > 100:
