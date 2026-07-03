@@ -20,6 +20,7 @@ on:
       - "src/new_york_workflow/nyc_predictor_onnx.py"
       - "src/metrics.py"
       - "scripts/retrain.py"
+      - "requirements.txt"
   workflow_dispatch:
     inputs:
       vus:
