@@ -21,7 +21,9 @@ backlog = 2048
 # ── worker pool ───────────────────────────────────────────────────────────────
 # uvicorn.workers.UvicornWorker = async ASGI workers (FastAPI is ASGI)
 worker_class  = "uvicorn.workers.UvicornWorker"
-workers       = int(os.getenv("GUNICORN_WORKERS", multiprocessing.cpu_count() * 2 + 1))
+# Cap at 4 on the 12 GB ARM free-tier node. preload_app shares the ONNX model
+# via copy-on-write, but each worker still needs ~1.5 GB for its own heap.
+workers       = int(os.getenv("GUNICORN_WORKERS", min(multiprocessing.cpu_count() * 2 + 1, 4)))
 threads       = 1        # uvicorn workers are async — no thread pool needed
 worker_connections = 1000
 
