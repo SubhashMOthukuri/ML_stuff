@@ -4,6 +4,8 @@ High-accuracy sentiment for 468K reviews using M3 GPU
 Time: ~20-30 minutes with true GPU batching
 """
 
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 import torch
@@ -53,7 +55,7 @@ except Exception as e:
 # ============================================================================
 
 print("\n📂 Loading reviews...")
-DATA_DIR = "/Users/subhashmothukurigmail.com/Projects/ML_stuff/data/airbnb"
+DATA_DIR = str(Path(__file__).resolve().parents[1] / "data" / "airbnb")
 reviews = pd.read_csv(f"{DATA_DIR}/reviews.csv")
 print(f"✓ Loaded {reviews.shape[0]:,} reviews")
 
