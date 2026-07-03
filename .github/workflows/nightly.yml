@@ -37,7 +37,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install --no-cache-dir -r requirements.txt
 
       - name: Download prediction database from production
         # In a real deployment, pull the predictions.db from production server
@@ -121,7 +121,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install --no-cache-dir -r requirements.txt
 
       - name: Rollback (if requested)
         if: github.event.inputs.rollback_version != ''

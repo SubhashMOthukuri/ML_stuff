@@ -60,7 +60,7 @@ jobs:
           cache: pip
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt
+        run: pip install --no-cache-dir -r requirements.txt
 
       # ── 3. Create test model artefacts ──────────────────────────────────────
       # models/ is gitignored so CI never has a pre-trained model.
