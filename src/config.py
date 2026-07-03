@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     slack_webhook_url: str      = Field("",          description="Slack incoming webhook URL")
     slack_critical_channel: str = Field("",          description="Override channel for critical alerts")
 
+    # ── CORS ───────────────────────────────────────────────────────────────────
+    cors_allow_origins: str     = Field(
+        "http://localhost:5173,http://localhost:3000",
+        description="Comma-separated list of allowed CORS origins",
+    )
+
     # ── Tracing (OpenTelemetry) ────────────────────────────────────────────────
     otlp_endpoint: str | None   = Field(None,        description="OTLP gRPC endpoint — None disables tracing")
 
@@ -88,6 +94,10 @@ class Settings(BaseSettings):
     @property
     def auth_enabled(self) -> bool:
         return bool(self.api_keys_set)
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
 
 
 # Module-level singleton — import this everywhere
