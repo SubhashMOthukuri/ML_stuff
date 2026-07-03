@@ -14,17 +14,18 @@ Set SLACK_CRITICAL_CHANNEL to override the channel for critical alerts
 
 import json
 import logging
-import os
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.config import settings
+
 logger = logging.getLogger(__name__)
 
-ALERTS_PATH = Path(os.getenv("ALERTS_FILE", "models/nyc/alerts.json"))
-_SLACK_WEBHOOK_URL      = os.getenv("SLACK_WEBHOOK_URL", "")
-_SLACK_CRITICAL_CHANNEL = os.getenv("SLACK_CRITICAL_CHANNEL", "")
+ALERTS_PATH             = settings.alerts_file
+_SLACK_WEBHOOK_URL      = settings.slack_webhook_url
+_SLACK_CRITICAL_CHANNEL = settings.slack_critical_channel
 
 _SEVERITY_EMOJI = {
     "critical": ":rotating_light:",

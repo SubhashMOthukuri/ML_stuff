@@ -762,26 +762,27 @@ class TestMetricsTracking:
 
 class TestGroundTruthIngest:
     def test_disabled_when_token_unset(self, client, monkeypatch):
-        from src.new_york_workflow import nyc_api
-        monkeypatch.setattr(nyc_api, "GROUND_TRUTH_INGEST_TOKEN", None)
+        import src.config as cfg
+        monkeypatch.setattr(cfg.settings, "ground_truth_ingest_token", "")
         r = client.post("/ground-truth/ingest")
         assert r.status_code == 503
 
     def test_rejects_missing_header(self, client, monkeypatch):
-        from src.new_york_workflow import nyc_api
-        monkeypatch.setattr(nyc_api, "GROUND_TRUTH_INGEST_TOKEN", "test-secret")
+        import src.config as cfg
+        monkeypatch.setattr(cfg.settings, "ground_truth_ingest_token", "test-secret")
         r = client.post("/ground-truth/ingest")
         assert r.status_code == 401
 
     def test_rejects_wrong_token(self, client, monkeypatch):
-        from src.new_york_workflow import nyc_api
-        monkeypatch.setattr(nyc_api, "GROUND_TRUTH_INGEST_TOKEN", "test-secret")
+        import src.config as cfg
+        monkeypatch.setattr(cfg.settings, "ground_truth_ingest_token", "test-secret")
         r = client.post("/ground-truth/ingest", headers={"X-Ingest-Token": "nope"})
         assert r.status_code == 401
 
     def test_accepts_correct_token_and_returns_ingest_result(self, client, monkeypatch):
+        import src.config as cfg
         from src.new_york_workflow import nyc_api
-        monkeypatch.setattr(nyc_api, "GROUND_TRUTH_INGEST_TOKEN", "test-secret")
+        monkeypatch.setattr(cfg.settings, "ground_truth_ingest_token", "test-secret")
         monkeypatch.setattr(
             nyc_api, "run_ground_truth_ingest",
             lambda url, dry_run: {"matched": 1, "inserted": 1, "pending": 1},
@@ -791,8 +792,9 @@ class TestGroundTruthIngest:
         assert r.json() == {"matched": 1, "inserted": 1, "pending": 1}
 
     def test_ingest_exception_returns_500(self, client, monkeypatch):
+        import src.config as cfg
+        monkeypatch.setattr(cfg.settings, "ground_truth_ingest_token", "test-secret")
         from src.new_york_workflow import nyc_api
-        monkeypatch.setattr(nyc_api, "GROUND_TRUTH_INGEST_TOKEN", "test-secret")
 
         def boom(url, dry_run):
             raise RuntimeError("snapshot download failed")

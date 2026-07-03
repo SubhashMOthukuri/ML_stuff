@@ -11,11 +11,10 @@ the API continues working, just without caching.
 import hashlib
 import json
 import logging
-import os
+
+from src.config import settings
 
 logger = logging.getLogger(__name__)
-
-CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "300"))
 
 
 class PredictionCache:
@@ -30,8 +29,9 @@ class PredictionCache:
         try:
             import redis
             self._client = redis.Redis(
-                host=os.getenv("REDIS_HOST", "localhost"),
-                port=int(os.getenv("REDIS_PORT", "6379")),
+                host=settings.redis_host,
+                port=settings.redis_port,
+                password=settings.redis_password or None,
                 socket_connect_timeout=2,
                 socket_timeout=1,
                 decode_responses=True,
@@ -61,7 +61,7 @@ class PredictionCache:
             self._misses += 1
             return None
 
-    def set(self, raw: dict, result: dict, ttl: int = CACHE_TTL) -> None:
+    def set(self, raw: dict, result: dict, ttl: int = settings.cache_ttl_seconds) -> None:
         if not self._client:
             return
         try:

@@ -6,7 +6,6 @@ Models: Ridge Regression | Random Forest | XGBoost
 Output: models/nyc/<model>.pkl  +  nyc_training_report.json
 """
 
-import os
 import pandas as pd
 import numpy as np
 import json
@@ -43,7 +42,8 @@ DATA_DIR  = BASE_DIR / "data" / "airbnb"
 MODEL_DIR = BASE_DIR / "models" / "nyc"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-MLFLOW_URI  = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{BASE_DIR / 'mlflow.db'}")
+from src.config import settings
+MLFLOW_URI  = settings.mlflow_tracking_uri
 EXPERIMENT  = "nyc-airbnb-price-exploration"   # exploration runs (all 3 models)
 MODEL_NAME  = "nyc-airbnb-xgboost"             # registry name for the XGBoost champion
 

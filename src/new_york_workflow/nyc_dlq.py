@@ -19,13 +19,13 @@ Retry worker (separate process) would BRPOP from nyc:dlq and replay.
 
 import json
 import logging
-import os
 from datetime import datetime, timezone
+
+from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-DLQ_KEY  = "nyc:dlq"
-DLQ_MAX  = int(os.getenv("DLQ_MAX_SIZE", "10000"))
+DLQ_KEY = "nyc:dlq"
 
 
 class DeadLetterQueue:
@@ -39,8 +39,9 @@ class DeadLetterQueue:
         try:
             import redis
             self._client = redis.Redis(
-                host=os.getenv("REDIS_HOST", "localhost"),
-                port=int(os.getenv("REDIS_PORT", "6379")),
+                host=settings.redis_host,
+                port=settings.redis_port,
+                password=settings.redis_password or None,
                 socket_connect_timeout=2,
                 socket_timeout=1,
                 decode_responses=True,
@@ -73,15 +74,15 @@ class DeadLetterQueue:
             try:
                 pipe = self._client.pipeline()
                 pipe.lpush(DLQ_KEY, json.dumps(entry))
-                pipe.ltrim(DLQ_KEY, 0, DLQ_MAX - 1)   # cap at DLQ_MAX entries
+                pipe.ltrim(DLQ_KEY, 0, settings.dlq_max_size - 1)   # cap at settings.dlq_max_size entries
                 pipe.execute()
                 return
             except Exception as exc:
                 logger.error("DLQ push to Redis failed: %s", exc)
         # in-memory fallback
         self._fallback.insert(0, entry)
-        if len(self._fallback) > DLQ_MAX:
-            self._fallback = self._fallback[:DLQ_MAX]
+        if len(self._fallback) > settings.dlq_max_size:
+            self._fallback = self._fallback[:settings.dlq_max_size]
 
     # ── reads ─────────────────────────────────────────────────────────────────
 

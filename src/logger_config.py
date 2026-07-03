@@ -20,12 +20,13 @@ Env vars:
 """
 
 import logging
-import os
 
 import structlog
 
-_SERVICE = os.getenv("DD_SERVICE", "nyc-api")
-_ENV     = os.getenv("DD_ENV", "dev")
+from src.config import settings
+
+_SERVICE = settings.dd_service
+_ENV     = settings.dd_env
 
 # Processors run on every log record — both structlog and stdlib loggers.
 _SHARED_PROCESSORS: list = [
@@ -45,8 +46,8 @@ def setup_logging() -> None:
     if root.handlers:
         return  # idempotent
 
-    log_format = os.getenv("LOG_FORMAT", "text").lower()
-    level      = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    log_format = settings.log_format
+    level      = getattr(logging, settings.log_level, logging.INFO)
 
     renderer = (
         structlog.processors.JSONRenderer()

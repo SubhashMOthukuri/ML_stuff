@@ -30,7 +30,6 @@ Environment variables:
 
 import logging
 import sys
-import os
 import time
 import uuid
 
@@ -58,6 +57,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
+from src.config import settings
 from src.logger_config import setup_logging
 from src.metrics import (
     metrics,
@@ -84,7 +84,7 @@ logger = structlog.get_logger(__name__)
 
 def _setup_tracing():
     provider = TracerProvider()
-    otlp_endpoint = os.getenv("OTLP_ENDPOINT")
+    otlp_endpoint = settings.otlp_endpoint
     if otlp_endpoint:
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=otlp_endpoint)))
@@ -99,28 +99,20 @@ tracer = _setup_tracing()
 
 # ── rate limiter ──────────────────────────────────────────────────────────────
 
-RATE_LIMIT = os.getenv("RATE_LIMIT", "60/minute")
-limiter    = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT])
+limiter = Limiter(key_func=get_remote_address, default_limits=[settings.rate_limit])
 
 # ── API key auth ──────────────────────────────────────────────────────────────
-# VALID_API_KEYS: comma-separated list. Empty = auth disabled (dev/local default).
-# Key rotation: add new key to the list, deploy, then remove old key + deploy again.
-# Exempt paths: health probes (needed by Docker), docs, root (discovery).
-
-_raw_keys = os.getenv("VALID_API_KEYS", "")
-VALID_API_KEYS: frozenset[str] = frozenset(k.strip() for k in _raw_keys.split(",") if k.strip())
+VALID_API_KEYS: frozenset[str] = settings.api_keys_set
 
 _AUTH_EXEMPT_PREFIXES = ("/health", "/docs", "/openapi.json", "/redoc", "/")
 
 
-# ── admin auth (gates /ground-truth/ingest — downloads external data + writes DB) ──
-
-GROUND_TRUTH_INGEST_TOKEN = os.getenv("GROUND_TRUTH_INGEST_TOKEN")
+# ── admin auth (gates /ground-truth/ingest) ───────────────────────────────────
 
 def _verify_ingest_token(x_ingest_token: Optional[str] = Header(None)) -> None:
-    if not GROUND_TRUTH_INGEST_TOKEN:
+    if not settings.ground_truth_ingest_token:
         raise HTTPException(status_code=503, detail="GROUND_TRUTH_INGEST_TOKEN not configured on server")
-    if x_ingest_token != GROUND_TRUTH_INGEST_TOKEN:
+    if x_ingest_token != settings.ground_truth_ingest_token:
         raise HTTPException(status_code=401, detail="Invalid or missing X-Ingest-Token header")
 
 # ── singletons (populated at startup) ────────────────────────────────────────
@@ -404,8 +396,8 @@ def model_info():
     import json as _json
     base = predictor.model_info()   # always include ONNX / local info
 
-    mlflow_uri  = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{_ROOT / 'mlflow.db'}")
-    mlflow_url  = os.getenv("MLFLOW_UI_URL", "http://localhost:5000")
+    mlflow_uri  = settings.mlflow_tracking_uri
+    mlflow_url  = settings.mlflow_ui_url
     model_name  = "nyc-airbnb-xgboost"
 
     try:
@@ -603,7 +595,7 @@ def acknowledge_all_alerts():
 
 
 @app.post("/predict", response_model=PredictionResponse)
-@limiter.limit(RATE_LIMIT)
+@limiter.limit(settings.rate_limit)
 def predict(listing: ListingFeatures, request: Request):
     """
     Predict nightly price. Checks Redis cache first; runs ONNX inference on miss.

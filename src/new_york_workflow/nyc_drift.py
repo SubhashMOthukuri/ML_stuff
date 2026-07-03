@@ -69,8 +69,8 @@ class DriftReport:
 class DriftMonitor:
 
     def __init__(self, db_path: Path | None = None, baseline_path: Path = BASELINE):
-        import os
-        self._db   = Path(db_path or os.getenv("PREDICTION_DB", "data/predictions.db"))
+        from src.config import settings
+        self._db   = Path(db_path or settings.prediction_db)
         self._base = self._load_baseline(baseline_path)
 
     @staticmethod
