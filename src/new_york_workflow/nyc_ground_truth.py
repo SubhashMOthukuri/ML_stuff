@@ -16,15 +16,16 @@ Lifecycle:
 
 import json
 import logging
-import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.config import settings
+
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(os.getenv("PREDICTION_DB", "data/predictions.db"))
+DB_PATH = settings.prediction_db
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ground_truth (

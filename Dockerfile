@@ -17,9 +17,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
-# BUILDPLATFORM = the machine running the build (your Mac)
-# This lets Docker cross-compile packages for the TARGET platform.
-FROM --platform=$BUILDPLATFORM python:3.11-slim AS builder
+# TARGETPLATFORM = the machine that will RUN the image (Oracle ARM node).
+# Python wheels with C extensions (numpy, onnxruntime, xgboost deps, ...) are
+# compiled binaries — they are NOT cross-compilable like Go. Building this
+# stage under $BUILDPLATFORM (your amd64 Mac) produces amd64 .so files that
+# crash with "exec format error" once copied into an arm64 runtime image.
+# Buildx runs this stage under QEMU emulation for TARGETPLATFORM instead, so
+# pip installs the correct native wheels for wherever the image will run.
+FROM --platform=$TARGETPLATFORM python:3.11-slim AS builder
 
 # Build tools needed to compile Python packages from source on ARM.
 # We only need these in the builder — they never reach the runtime image.

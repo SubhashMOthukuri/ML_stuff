@@ -5,6 +5,7 @@ TestClient spins up the full FastAPI lifespan (model loading) once per
 session, so every test hits the same predictor instance — same as production.
 """
 
+import os
 import sys
 import pytest
 from pathlib import Path
@@ -12,12 +13,17 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Set test API key BEFORE the app module is imported (module-level VALID_API_KEYS is
+# evaluated at import time). Empty env = auth disabled; this enables it for auth tests.
+_TEST_API_KEY = "test-api-key-for-pytest"
+os.environ.setdefault("VALID_API_KEYS", _TEST_API_KEY)
+
 
 @pytest.fixture(scope="session")
 def client():
     """Single TestClient shared across the whole test session."""
     from src.new_york_workflow.nyc_api import app
-    with TestClient(app) as c:
+    with TestClient(app, headers={"X-API-Key": _TEST_API_KEY}) as c:
         yield c
 
 

@@ -77,6 +77,7 @@ PRICE_CAP   = 0.99
 
 INSIDEAIRBNB_BASE = "https://data.insideairbnb.com/united-states/ny/new-york-city"
 
+# Fixed fallback params used when --skip-optuna is set or Optuna is unavailable.
 XGB_PARAMS = {
     "n_estimators":     800,
     "max_depth":        8,
@@ -91,6 +92,9 @@ XGB_PARAMS = {
     "n_jobs":           -1,
     "verbosity":        0,
 }
+
+OPTUNA_N_TRIALS = 20    # ~3-5 min on GH Actions ubuntu-latest; raise for quality, lower for speed
+OPTUNA_CV_FOLDS = 3     # cross-validation folds for objective — faster than full train+eval
 
 
 # ── InsideAirbnb download ──────────────────────────────────────────────────────
@@ -299,8 +303,51 @@ def prepare_xy(df: pd.DataFrame, feature_list: list[str]):
 
 # ── train ──────────────────────────────────────────────────────────────────────
 
-def train(X_train, y_train) -> XGBRegressor:
-    model = XGBRegressor(**XGB_PARAMS)
+def _tune_hyperparams(X_train: np.ndarray, y_train: np.ndarray, n_trials: int = OPTUNA_N_TRIALS) -> dict:
+    """
+    Run a 20-trial Optuna TPE study over XGBoost hyperparameters.
+    Objective: mean CV MAE on log_price (lower = better).
+    Returns the best param dict, including fixed params not tuned (n_jobs, random_state, verbosity).
+    """
+    import optuna
+    from sklearn.model_selection import cross_val_score
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    def objective(trial) -> float:
+        params = {
+            "n_estimators":     trial.suggest_int(  "n_estimators",     300,  1500, step=100),
+            "max_depth":        trial.suggest_int(  "max_depth",         3,    10),
+            "learning_rate":    trial.suggest_float("learning_rate",     0.01, 0.2,  log=True),
+            "min_child_weight": trial.suggest_int(  "min_child_weight",  1,    10),
+            "subsample":        trial.suggest_float("subsample",         0.5,  1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree",  0.5,  1.0),
+            "reg_alpha":        trial.suggest_float("reg_alpha",         0.0,  1.0),
+            "reg_lambda":       trial.suggest_float("reg_lambda",        1.0,  20.0),
+            "gamma":            0,
+            "random_state":     RANDOM_SEED,
+            "n_jobs":           -1,
+            "verbosity":        0,
+        }
+        model    = XGBRegressor(**params)
+        neg_maes = cross_val_score(model, X_train, y_train, cv=OPTUNA_CV_FOLDS,
+                                   scoring="neg_mean_absolute_error", n_jobs=1)
+        return float(-neg_maes.mean())
+
+    study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED))
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    best = study.best_params
+    best.update({"gamma": 0, "random_state": RANDOM_SEED, "n_jobs": -1, "verbosity": 0})
+    logger.info(
+        "Optuna best: n_estimators=%d  depth=%d  lr=%.4f  MAE=%.4f (cv, log-scale)",
+        best["n_estimators"], best["max_depth"], best["learning_rate"], study.best_value,
+    )
+    return best
+
+
+def train(X_train: np.ndarray, y_train: np.ndarray, params: dict | None = None) -> XGBRegressor:
+    """Train XGBoost with provided params, or fall back to fixed XGB_PARAMS."""
+    model = XGBRegressor(**(params or XGB_PARAMS))
     model.fit(X_train, y_train, verbose=False)
     return model
 
@@ -383,13 +430,16 @@ def register_with_mlflow(
     )
 
     with mlflow.start_run(run_name=f"retrain-{datetime.now().strftime('%Y%m%d-%H%M')}") as run:
-        # ── hyperparams ───────────────────────────────────────────────────────
-        mlflow.log_params({k: str(v) for k, v in XGB_PARAMS.items()})
+        # ── hyperparams (tuned > fixed fallback) ─────────────────────────────
+        effective_params = tuned_params if tuned_params else XGB_PARAMS
+        mlflow.log_params({k: str(v) for k, v in effective_params.items()})
         mlflow.log_params({
-            "n_features":  len(feature_list),
-            "n_samples":   n_samples,
-            "data_date":   data_date or str(date.today()),
-            "gate_stage":  stage,
+            "n_features":         len(feature_list),
+            "n_samples":          n_samples,
+            "data_date":          data_date or str(date.today()),
+            "gate_stage":         stage,
+            "optuna_n_trials":    OPTUNA_N_TRIALS if tuned_params else 0,
+            "optuna_skipped":     str(not bool(tuned_params)),
         })
 
         # ── metrics ───────────────────────────────────────────────────────────
@@ -464,7 +514,7 @@ def rollback(version: int) -> None:
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
-def main(force: bool = False, rollback_version: int | None = None, no_download: bool = False):
+def main(force: bool = False, rollback_version: int | None = None, no_download: bool = False, skip_optuna: bool = False):
     if rollback_version is not None:
         rollback(rollback_version)
         return
@@ -491,8 +541,15 @@ def main(force: bool = False, rollback_version: int | None = None, no_download: 
     X_train_s = scaler.fit_transform(X_train).astype(np.float32)
     X_test_s  = scaler.transform(X_test).astype(np.float32)
 
+    if skip_optuna:
+        logger.info("Optuna skipped (--skip-optuna). Using fixed XGB_PARAMS.")
+        tuned_params = None
+    else:
+        logger.info("Optuna: running %d-trial hyperparameter search…", OPTUNA_N_TRIALS)
+        tuned_params = _tune_hyperparams(X_train_s, y_train)
+
     logger.info("Training XGBoost (%d features, %d train rows)…", len(feature_list), len(X_train))
-    model = train(X_train_s, y_train)
+    model = train(X_train_s, y_train, params=tuned_params)
 
     metrics = evaluate(model, X_test_s, y_test, df_test)
     logger.info("New model:  R²=%.4f  MAE=$%.2f  MAPE=%.1f%%",
@@ -592,5 +649,10 @@ if __name__ == "__main__":
         "--rollback", type=int, metavar="VERSION",
         help="Re-promote an existing MLflow version to Production (skips training)",
     )
+    parser.add_argument(
+        "--skip-optuna", action="store_true",
+        help="Skip Optuna hyperparameter search and use fixed XGB_PARAMS (faster runs, CI testing)",
+    )
     args = parser.parse_args()
-    main(force=args.force, rollback_version=args.rollback, no_download=args.no_download)
+    main(force=args.force, rollback_version=args.rollback, no_download=args.no_download,
+         skip_optuna=args.skip_optuna)

@@ -36,6 +36,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from src.exceptions import DataQualityError
+
 import numpy as np
 import pandas as pd
 
@@ -73,9 +75,6 @@ _REQUIRED_ENGINEERED = [
 
 # ── report ────────────────────────────────────────────────────────────────────
 
-class DataQualityError(RuntimeError):
-    """Hard data quality failure — pipeline should not continue."""
-
 
 @dataclass
 class DataQualityReport:
@@ -89,8 +88,7 @@ class DataQualityReport:
 
     def raise_if_failed(self) -> None:
         if not self.passed:
-            bullet = "\n  · ".join(self.errors)
-            raise DataQualityError(f"[{self.stage}] Data quality failed:\n  · {bullet}")
+            raise DataQualityError(self.stage, self.errors)
 
     def log_summary(self) -> None:
         badge = "✓ PASSED" if self.passed else "✗ FAILED"
