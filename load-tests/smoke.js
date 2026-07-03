@@ -69,6 +69,8 @@ export const options = {
     // All check() assertions must pass ≥99% of the time
     'checks': ['rate>0.99'],
   },
+
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)'],
 };
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
@@ -241,7 +243,7 @@ export function handleSummary(data) {
     console.log(`  Req/s          : ${reqs.values.rate.toFixed(1)}`);
     console.log(`  p50 latency    : ${dur.values['p(50)'].toFixed(1)} ms`);
     console.log(`  p95 latency    : ${dur.values['p(95)'].toFixed(1)} ms`);
-    console.log(`  p99 latency    : ${dur.values['p(99)'].toFixed(1)} ms`);
+    console.log(`  p99 latency    : ${(dur.values['p(99)'] || 0).toFixed(1)} ms`);
   }
   console.log('────────────────────────────────────────────────────────────\n');
 

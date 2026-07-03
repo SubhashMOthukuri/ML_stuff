@@ -95,6 +95,7 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: "6379"
           VALID_API_KEYS: ci-load-test-key
+          RATE_LIMIT: "10000/minute"   # disable effective rate limiting for load test
           LOG_FORMAT: json
           LOG_LEVEL: warning     # reduce noise; k6 output is what matters
           PREDICTION_DB: /tmp/predictions.db
