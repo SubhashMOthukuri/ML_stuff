@@ -28,4 +28,4 @@ optuna>=3.0.0
 # ── structured logging ────────────────────────────────────────────────────────
 structlog>=24.0.0
 # ── Prometheus metrics ────────────────────────────────────────────────────────
-prometheus-fastapi-instrumentator>=7.0.0
+prometheus-fastapi-instrumentator>=7.0.0,<8.0.0
