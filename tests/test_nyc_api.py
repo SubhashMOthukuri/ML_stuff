@@ -853,7 +853,8 @@ class TestAPIKeyAuth:
 
     def test_auth_disabled_when_valid_api_keys_empty(self, valid_listing, monkeypatch):
         from src.new_york_workflow import nyc_api
-        monkeypatch.setattr(nyc_api, "VALID_API_KEYS", frozenset())
+        from src.config import settings
+        monkeypatch.setattr(settings, "valid_api_keys", "")
         from fastapi.testclient import TestClient as TC
         with TC(nyc_api.app) as c:
             r = c.post("/predict", json=valid_listing)
@@ -861,87 +862,94 @@ class TestAPIKeyAuth:
 
 
 class TestSlackAlerts:
-    def test_slack_not_called_when_no_webhook(self, tmp_path):
+    def test_slack_not_called_when_no_webhook(self, tmp_path, monkeypatch):
         from unittest.mock import patch
         from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.config import settings
         store = AlertStore(tmp_path / "alerts.json")
-        with patch("src.new_york_workflow.nyc_alerts._SLACK_WEBHOOK_URL", ""):
-            with patch("requests.post") as mock_post:
-                store.push("test_alert", "hello", severity="warning")
-                mock_post.assert_not_called()
+        monkeypatch.setattr(settings, "slack_webhook_url", "")
+        with patch("requests.post") as mock_post:
+            store.push("test_alert", "hello", severity="warning")
+            mock_post.assert_not_called()
 
-    def test_slack_not_called_for_info_severity(self, tmp_path):
+    def test_slack_not_called_for_info_severity(self, tmp_path, monkeypatch):
         from unittest.mock import patch
         from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.config import settings
         store = AlertStore(tmp_path / "alerts.json")
-        with patch("src.new_york_workflow.nyc_alerts._SLACK_WEBHOOK_URL", "https://hooks.slack.com/fake"):
-            with patch("requests.post") as mock_post:
-                store.push("info_event", "just fyi", severity="info")
-                mock_post.assert_not_called()
+        monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
+        with patch("requests.post") as mock_post:
+            store.push("info_event", "just fyi", severity="info")
+            mock_post.assert_not_called()
 
-    def test_slack_called_for_warning(self, tmp_path):
+    def test_slack_called_for_warning(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
         from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.config import settings
         store = AlertStore(tmp_path / "alerts.json")
+        monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
         mock_resp = MagicMock()
         mock_resp.ok = True
-        with patch("src.new_york_workflow.nyc_alerts._SLACK_WEBHOOK_URL", "https://hooks.slack.com/fake"):
-            with patch("requests.post", return_value=mock_resp) as mock_post:
-                store.push("drift_detected", "PSI > 0.20", severity="warning")
-                mock_post.assert_called_once()
-                payload = mock_post.call_args.kwargs["json"]
-                assert "WARNING" in payload["text"]
-                assert "drift_detected" in payload["text"]
+        with patch("requests.post", return_value=mock_resp) as mock_post:
+            store.push("drift_detected", "PSI > 0.20", severity="warning")
+            mock_post.assert_called_once()
+            payload = mock_post.call_args.kwargs["json"]
+            assert "WARNING" in payload["text"]
+            assert "drift_detected" in payload["text"]
 
-    def test_slack_called_for_critical(self, tmp_path):
+    def test_slack_called_for_critical(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
         from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.config import settings
         store = AlertStore(tmp_path / "alerts.json")
+        monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
         mock_resp = MagicMock()
         mock_resp.ok = True
-        with patch("src.new_york_workflow.nyc_alerts._SLACK_WEBHOOK_URL", "https://hooks.slack.com/fake"):
-            with patch("requests.post", return_value=mock_resp) as mock_post:
-                store.push("rollback", "auto-reverted", severity="critical")
-                mock_post.assert_called_once()
-                payload = mock_post.call_args.kwargs["json"]
-                assert "CRITICAL" in payload["text"]
-                assert ":rotating_light:" in payload["text"]
+        with patch("requests.post", return_value=mock_resp) as mock_post:
+            store.push("rollback", "auto-reverted", severity="critical")
+            mock_post.assert_called_once()
+            payload = mock_post.call_args.kwargs["json"]
+            assert "CRITICAL" in payload["text"]
+            assert ":rotating_light:" in payload["text"]
 
-    def test_slack_critical_channel_override(self, tmp_path):
+    def test_slack_critical_channel_override(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
         from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.config import settings
         store = AlertStore(tmp_path / "alerts.json")
+        monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
+        monkeypatch.setattr(settings, "slack_critical_channel", "#incidents")
         mock_resp = MagicMock()
         mock_resp.ok = True
-        with patch("src.new_york_workflow.nyc_alerts._SLACK_WEBHOOK_URL", "https://hooks.slack.com/fake"):
-            with patch("src.new_york_workflow.nyc_alerts._SLACK_CRITICAL_CHANNEL", "#incidents"):
-                with patch("requests.post", return_value=mock_resp) as mock_post:
-                    store.push("rollback", "reverted", severity="critical")
-                    payload = mock_post.call_args.kwargs["json"]
-                    assert payload["channel"] == "#incidents"
+        with patch("requests.post", return_value=mock_resp) as mock_post:
+            store.push("rollback", "reverted", severity="critical")
+            payload = mock_post.call_args.kwargs["json"]
+            assert payload["channel"] == "#incidents"
 
-    def test_slack_failure_does_not_raise(self, tmp_path):
+    def test_slack_failure_does_not_raise(self, tmp_path, monkeypatch):
         from unittest.mock import patch
         from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.config import settings
         store = AlertStore(tmp_path / "alerts.json")
-        with patch("src.new_york_workflow.nyc_alerts._SLACK_WEBHOOK_URL", "https://hooks.slack.com/fake"):
-            with patch("requests.post", side_effect=Exception("network down")):
-                alert_id = store.push("oops", "msg", severity="critical")
-                assert alert_id  # file write still succeeded
+        monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
+        with patch("requests.post", side_effect=Exception("network down")):
+            alert_id = store.push("oops", "msg", severity="critical")
+            assert alert_id  # file write still succeeded
 
-    def test_push_once_dedup_still_works_with_slack(self, tmp_path):
+    def test_push_once_dedup_still_works_with_slack(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
         from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.config import settings
         store = AlertStore(tmp_path / "alerts.json")
+        monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
         mock_resp = MagicMock()
         mock_resp.ok = True
-        with patch("src.new_york_workflow.nyc_alerts._SLACK_WEBHOOK_URL", "https://hooks.slack.com/fake"):
-            with patch("requests.post", return_value=mock_resp) as mock_post:
-                id1 = store.push_once("drift", "first", severity="warning")
-                id2 = store.push_once("drift", "duplicate", severity="warning")
-                assert id1 is not None
-                assert id2 is None           # suppressed
-                mock_post.assert_called_once()  # Slack only fired once
+        with patch("requests.post", return_value=mock_resp) as mock_post:
+            id1 = store.push_once("drift", "first", severity="warning")
+            id2 = store.push_once("drift", "duplicate", severity="warning")
+            assert id1 is not None
+            assert id2 is None           # suppressed
+            mock_post.assert_called_once()  # Slack only fired once
 
 
 class TestPrometheusMetrics:
