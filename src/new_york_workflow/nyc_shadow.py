@@ -134,6 +134,41 @@ class ShadowPredictor:
 
     # ── async inference ────────────────────────────────────────────────────────
 
+    def predict_sync(self, raw: dict) -> dict | None:
+        """
+        Run challenger inference synchronously and return a result dict.
+        Used by A/B test and canary when the challenger result is shown to the user.
+        Returns None if shadow is inactive or inference fails (caller falls back to champion).
+        """
+        if not self.active:
+            return None
+        try:
+            with self._session_lock:
+                sess              = self._session
+                input_name        = self._input_name
+                challenger_scaler = self._challenger_scaler
+
+            if sess is None or self._champion is None:
+                return None
+
+            row      = self._champion._engineer(raw)
+            df       = pd.DataFrame([row])[self._champion.feature_list]
+            scaler   = challenger_scaler if challenger_scaler is not None else self._champion.scaler
+            X_scaled = scaler.transform(df).astype(np.float32)
+
+            out       = sess.run(None, {input_name: X_scaled})
+            log_price = float(np.array(out[0]).flat[0])
+            price_usd = float(np.expm1(log_price))
+
+            return {
+                "price_usd": round(price_usd, 2),
+                "price_str": f"${price_usd:,.0f}/night",
+                "log_price": round(log_price, 4),
+            }
+        except Exception as exc:
+            logger.debug("ShadowPredictor.predict_sync suppressed: %s", exc)
+            return None
+
     def run_async(
         self,
         raw: dict,
