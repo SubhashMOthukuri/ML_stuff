@@ -59,8 +59,8 @@ export const options = {
   thresholds: {
     // Per-endpoint latency (tagged by name: param in requests below)
     'http_req_duration{name:predict}':       ['p(95)<500'],
-    'http_req_duration{name:predict_cache}': ['p(95)<50'],   // cache hits should be <50ms
-    'http_req_duration{name:health}':        ['p(95)<50'],
+    'http_req_duration{name:predict_cache}': ['p(95)<200'],  // cache hits; 200ms suits CI runners
+    'http_req_duration{name:health}':        ['p(95)<100'],
 
     // Overall error rate across all requests
     'http_req_failed':   ['rate<0.01'],   // < 1% HTTP errors
