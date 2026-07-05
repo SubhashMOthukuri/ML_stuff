@@ -45,3 +45,4 @@ frontend:
     repository: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend
     tag: latest
 
+
