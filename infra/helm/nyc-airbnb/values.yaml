@@ -25,6 +25,9 @@ env:
   REDIS_HOST: redis
   REDIS_PORT: "6379"
   PREDICTION_DB: /tmp/predictions.db
+  OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4317"
+  DD_ENV: prod
+  DD_SERVICE: nyc-airbnb
 
 redis:
   enabled: true
