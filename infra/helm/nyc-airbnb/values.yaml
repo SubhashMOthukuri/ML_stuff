@@ -1,0 +1,46 @@
+image:
+  repository: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb
+  tag: latest
+  pullPolicy: Always
+
+replicaCount: 1
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8001
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+env:
+  LOG_FORMAT: json
+  LOG_LEVEL: info
+  RATE_LIMIT: "100/minute"
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  PREDICTION_DB: /tmp/predictions.db
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  port: 6379
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+secretName: nyc-airbnb-secrets
+
+frontend:
+  image:
+    repository: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend
+    tag: latest
