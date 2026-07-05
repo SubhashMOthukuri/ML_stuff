@@ -1,6 +1,6 @@
 image:
   repository: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb
-  tag: e17c5e3
+  tag: 6862929
   pullPolicy: Always
 
 replicaCount: 1
@@ -43,6 +43,6 @@ secretName: nyc-airbnb-secrets
 frontend:
   image:
     repository: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend
-    tag: e17c5e3
+    tag: 6862929
 
 
