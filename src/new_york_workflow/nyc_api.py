@@ -245,6 +245,7 @@ async def api_key_auth(request: Request, call_next) -> Response:
         or path.startswith("/docs")
         or path.startswith("/openapi")
         or path.startswith("/redoc")
+        or path.startswith("/metrics")
     )
     if exempt:
         return await call_next(request)
