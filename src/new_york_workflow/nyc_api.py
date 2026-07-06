@@ -40,7 +40,7 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from prometheus_fastapi_instrumentator import Instrumentator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 from fastapi import FastAPI, HTTPException, Request, Response, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,6 +101,11 @@ tracer = _setup_tracing()
 
 limiter = Limiter(key_func=get_remote_address, default_limits=[settings.rate_limit])
 
+# ── price sanity bounds ───────────────────────────────────────────────────────
+# NYC Airbnb market range. Predictions outside this range indicate model failure.
+_PRICE_MIN_USD = 10.0
+_PRICE_MAX_USD = 5_000.0
+
 # ── API key auth ──────────────────────────────────────────────────────────────
 
 _AUTH_EXEMPT_PREFIXES = ("/health", "/docs", "/openapi.json", "/redoc", "/")
@@ -113,6 +118,20 @@ def _verify_ingest_token(x_ingest_token: Optional[str] = Header(None)) -> None:
         raise HTTPException(status_code=503, detail="GROUND_TRUTH_INGEST_TOKEN not configured on server")
     if x_ingest_token != settings.ground_truth_ingest_token:
         raise HTTPException(status_code=401, detail="Invalid or missing X-Ingest-Token header")
+
+def _guard_price(price_usd: float, request_id: str) -> None:
+    """Raise 422 if predicted price is outside the valid NYC Airbnb market range."""
+    if price_usd < _PRICE_MIN_USD or price_usd > _PRICE_MAX_USD:
+        logger.error(
+            "price_guard FAIL rid=%s price=%.2f range=[%.0f, %.0f]",
+            request_id[:8], price_usd, _PRICE_MIN_USD, _PRICE_MAX_USD,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"Predicted price ${price_usd:.2f} is outside valid range "
+                   f"[${_PRICE_MIN_USD:.0f}, ${_PRICE_MAX_USD:.0f}] — possible model failure",
+        )
+
 
 # ── singletons (populated at startup) ────────────────────────────────────────
 
@@ -282,8 +301,8 @@ class ListingFeatures(BaseModel):
     bedrooms:                    float = Field(1.0, ge=0, le=20)
     bathrooms:                   float = Field(1.0, ge=0, le=20)
     is_private_bath:             bool  = True
-    room_type:                   str   = Field(..., description="Entire home/apt | Private room | Shared room | Hotel room")
-    borough:                     str   = Field(..., description="Manhattan | Brooklyn | Queens | Bronx | Staten Island")
+    room_type:                   Literal["Entire home/apt", "Private room", "Shared room", "Hotel room"]
+    borough:                     Literal["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
     neighbourhood:               str   = ""
     latitude:                    float = Field(..., ge=40.4, le=41.0)
     longitude:                   float = Field(..., ge=-74.3, le=-73.6)
@@ -714,6 +733,8 @@ def predict(listing: ListingFeatures, request: Request):
         from src.metrics import prom_predictions_total, prom_prediction_price_usd
         prom_predictions_total.labels(arm=routed_arm, cache_hit="false").inc()
         prom_prediction_price_usd.observe(result["price_usd"])
+
+        _guard_price(result["price_usd"], request_id)
 
         span.set_attribute("cache.hit",            False)
         span.set_attribute("prediction.price_usd", result["price_usd"])

@@ -518,32 +518,37 @@ class TestPydanticValidation:
 
 class TestPredictorValidation:
     """
-    These pass Pydantic's checks but are caught by NYCAirbnbPredictor._validate()
-    and returned as HTTP 422 via the endpoint's ValueError handler.
+    room_type and borough are now Pydantic Literal types — rejected at the
+    API boundary before reaching the predictor. detail is a list of error dicts.
     """
+
+    @staticmethod
+    def _detail_str(r) -> str:
+        """Normalise detail to a searchable string regardless of Pydantic version."""
+        detail = r.json()["detail"]
+        return str(detail).lower() if not isinstance(detail, str) else detail.lower()
 
     def test_invalid_room_type_422(self, client, valid_listing):
         r = post_predict(client, with_override(valid_listing, room_type="Studio"))
         assert r.status_code == 422
-        assert "room_type" in r.json()["detail"].lower()
+        assert "room_type" in self._detail_str(r)
 
     def test_invalid_borough_422(self, client, valid_listing):
         r = post_predict(client, with_override(valid_listing, borough="New Jersey"))
         assert r.status_code == 422
-        assert "borough" in r.json()["detail"].lower()
+        assert "borough" in self._detail_str(r)
 
     def test_invalid_room_type_detail_lists_valid_options(self, client, valid_listing):
-        detail = post_predict(
-            client, with_override(valid_listing, room_type="Penthouse")
-        ).json()["detail"]
-        # detail should mention valid options
-        assert "Private room" in detail or "Entire home" in detail
+        detail_str = self._detail_str(
+            post_predict(client, with_override(valid_listing, room_type="Penthouse"))
+        )
+        assert "private room" in detail_str or "entire home" in detail_str
 
     def test_invalid_borough_detail_lists_valid_options(self, client, valid_listing):
-        detail = post_predict(
-            client, with_override(valid_listing, borough="Narnia")
-        ).json()["detail"]
-        assert "Manhattan" in detail or "Brooklyn" in detail
+        detail_str = self._detail_str(
+            post_predict(client, with_override(valid_listing, borough="Narnia"))
+        )
+        assert "manhattan" in detail_str or "brooklyn" in detail_str
 
     # ── NOTE: the following inputs PASS validation ────────────────────────────
     # These are documented here so future developers know the model's tolerance.
@@ -982,3 +987,56 @@ class TestPrometheusMetrics:
     def test_prometheus_has_dlq_gauge(self, client):
         body = client.get("/metrics").text
         assert "nyc_dlq_size" in body
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# /predict — price sanity guard
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestPriceSanityGuard:
+    """
+    _guard_price raises 422 for predictions outside [$10, $5000].
+    These tests mock predictor.predict_raw to return extreme values.
+    """
+
+    def test_valid_price_passes(self, client, valid_listing):
+        r = post_predict(client, valid_listing)
+        assert r.status_code == 200
+        price = r.json()["price_usd"]
+        assert 10.0 <= price <= 5000.0
+
+    def test_price_sanity_guard_imported(self):
+        from src.new_york_workflow.nyc_api import _PRICE_MIN_USD, _PRICE_MAX_USD, _guard_price
+        assert _PRICE_MIN_USD == 10.0
+        assert _PRICE_MAX_USD == 5_000.0
+
+    def test_guard_raises_on_zero_price(self):
+        from src.new_york_workflow.nyc_api import _guard_price
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            _guard_price(0.0, "test-rid-001")
+        assert exc.value.status_code == 422
+        assert "below minimum" in exc.value.detail
+
+    def test_guard_raises_on_negative_price(self):
+        from src.new_york_workflow.nyc_api import _guard_price
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            _guard_price(-50.0, "test-rid-002")
+        assert exc.value.status_code == 422
+
+    def test_guard_raises_on_excessive_price(self):
+        from src.new_york_workflow.nyc_api import _guard_price
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            _guard_price(99_999.0, "test-rid-003")
+        assert exc.value.status_code == 422
+        assert "above maximum" in exc.value.detail
+
+    def test_guard_passes_on_boundary_minimum(self):
+        from src.new_york_workflow.nyc_api import _guard_price
+        _guard_price(10.0, "test-rid-004")   # must not raise
+
+    def test_guard_passes_on_boundary_maximum(self):
+        from src.new_york_workflow.nyc_api import _guard_price
+        _guard_price(5000.0, "test-rid-005")  # must not raise
