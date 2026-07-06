@@ -66,7 +66,8 @@ from src.new_york_workflow.nyc_data_validator import (
 BASE_DIR   = Path(__file__).resolve().parents[1]
 DATA_DIR   = BASE_DIR / "data" / "airbnb"
 MODEL_DIR  = BASE_DIR / "models" / "nyc"
-MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{BASE_DIR / 'mlflow.db'}")
+MLFLOW_URI           = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{BASE_DIR / 'mlflow.db'}")
+MLFLOW_ARTIFACT_ROOT = os.getenv("MLFLOW_ARTIFACT_ROOT", "")
 MODEL_NAME = "nyc-airbnb-xgboost"
 
 TARGET      = "log_price"
@@ -423,6 +424,16 @@ def register_with_mlflow(
     tuned_params: dict | None = None,
 ) -> int:
     mlflow.set_tracking_uri(MLFLOW_URI)
+    if MLFLOW_ARTIFACT_ROOT:
+        # Ensure the experiment is created with the S3 artifact root on first run.
+        from mlflow.tracking import MlflowClient as _C
+        _client = _C(tracking_uri=MLFLOW_URI)
+        existing = _client.get_experiment_by_name("nyc-airbnb-retraining")
+        if existing is None:
+            _client.create_experiment(
+                "nyc-airbnb-retraining",
+                artifact_location=MLFLOW_ARTIFACT_ROOT,
+            )
     mlflow.set_experiment("nyc-airbnb-retraining")
 
     onnx_path = (

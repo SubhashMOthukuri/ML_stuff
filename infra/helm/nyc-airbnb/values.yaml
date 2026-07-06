@@ -24,11 +24,12 @@ env:
   RATE_LIMIT: "100/minute"
   REDIS_HOST: redis
   REDIS_PORT: "6379"
-  PREDICTION_DB: /tmp/predictions.db
   OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4317"
   OTEL_SERVICE_NAME: nyc-airbnb
+  MLFLOW_ARTIFACT_ROOT: "s3://nyc-airbnb-models-698172256228/mlflow/"
   DD_ENV: prod
   DD_SERVICE: nyc-airbnb
+  # PREDICTION_DB, SHADOW_DB_URL, MLFLOW_TRACKING_URI injected from nyc-airbnb-secrets (ESO → Secrets Manager)
 
 redis:
   enabled: true
