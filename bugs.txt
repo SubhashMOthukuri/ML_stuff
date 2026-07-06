@@ -1,1 +1,2 @@
 [2026-07-06T05:00] Bug: API key hardcoded in frontend/nginx.conf and committed to Git—fixed by using envsubst template (nginx /etc/nginx/templates/) with NGINX_API_KEY injected from K8s secret at pod startup.
+[2026-07-06T06:00] Bug: register_with_mlflow() referenced tuned_params as a free variable but it is a local in main()—NameError at runtime. Fixed by adding tuned_params as an explicit parameter with None default and passing it from both call sites.

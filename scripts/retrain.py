@@ -420,6 +420,7 @@ def register_with_mlflow(
     stage: str,       # "Production" or "Staging"
     n_samples: int = 0,
     data_date: str = "",
+    tuned_params: dict | None = None,
 ) -> int:
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment("nyc-airbnb-retraining")
@@ -574,6 +575,7 @@ def main(force: bool = False, rollback_version: int | None = None, no_download: 
         version = register_with_mlflow(
             model, metrics, feature_list, scaler,
             stage="Production", n_samples=n_samples, data_date=data_date,
+            tuned_params=tuned_params,
         )
 
         # Update baseline metrics so the next gate is relative to this run
@@ -591,6 +593,7 @@ def main(force: bool = False, rollback_version: int | None = None, no_download: 
         version = register_with_mlflow(
             model, metrics, feature_list, scaler,
             stage="Staging", n_samples=n_samples, data_date=data_date,
+            tuned_params=tuned_params,
         )
         logger.warning("Registered as Staging version %d — champion unchanged", version)
 
