@@ -1016,7 +1016,7 @@ class TestPriceSanityGuard:
         with pytest.raises(HTTPException) as exc:
             _guard_price(0.0, "test-rid-001")
         assert exc.value.status_code == 422
-        assert "below minimum" in exc.value.detail
+        assert "outside valid range" in exc.value.detail
 
     def test_guard_raises_on_negative_price(self):
         from src.new_york_workflow.nyc_api import _guard_price
@@ -1031,7 +1031,7 @@ class TestPriceSanityGuard:
         with pytest.raises(HTTPException) as exc:
             _guard_price(99_999.0, "test-rid-003")
         assert exc.value.status_code == 422
-        assert "above maximum" in exc.value.detail
+        assert "outside valid range" in exc.value.detail
 
     def test_guard_passes_on_boundary_minimum(self):
         from src.new_york_workflow.nyc_api import _guard_price

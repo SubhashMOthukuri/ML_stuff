@@ -44,7 +44,7 @@ from typing import Literal, Optional, List
 
 from fastapi import FastAPI, HTTPException, Request, Response, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -757,7 +757,7 @@ def predict(listing: ListingFeatures, request: Request):
 
 @app.post("/predict-batch")
 @limiter.limit(settings.rate_limit)
-def predict_batch(listings: List[ListingFeatures], request: Request):
+def predict_batch(listings: List[dict], request: Request):
     """Batch predict up to 100 listings. Stricter rate limit: 20/minute."""
     if len(listings) > 100:
         raise HTTPException(status_code=422, detail="Batch size exceeds maximum of 100")
@@ -766,7 +766,18 @@ def predict_batch(listings: List[ListingFeatures], request: Request):
     with tracer.start_as_current_span("predict_batch") as span:
         span.set_attribute("batch.size", len(listings))
         results = []
-        for i, listing in enumerate(listings):
+        for i, raw_item in enumerate(listings):
+            try:
+                listing = ListingFeatures.model_validate(raw_item)
+            except ValidationError as exc:
+                err = "; ".join(
+                    f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
+                    for e in exc.errors()
+                )
+                logger.warning("Batch item %d validation error: %s", i, err)
+                results.append({"index": i, "price_usd": None, "cache_hit": False, "error": err})
+                continue
+
             lid = listing.listing_id
             raw = listing.model_dump(exclude={"listing_id"})
             cached = cache.get(raw)
