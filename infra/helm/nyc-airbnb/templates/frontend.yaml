@@ -17,6 +17,12 @@ spec:
         - name: frontend
           image: {{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}
           imagePullPolicy: Always
+          env:
+            - name: NGINX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: VALID_API_KEYS
           ports:
             - containerPort: 80
           resources:
