@@ -32,8 +32,9 @@ class Settings(BaseSettings):
     redis_password: str         = Field("",          description="Redis password (empty = no auth)")
     cache_ttl_seconds: int      = Field(300,         description="Prediction cache TTL in seconds")
 
-    # ── SQLite stores ──────────────────────────────────────────────────────────
-    prediction_db: Path         = Field("data/predictions.db", description="SQLite predictions DB path")
+    # ── Database stores ────────────────────────────────────────────────────────
+    prediction_db: str          = Field("data/predictions.db", description="SQLite path or Postgres DSN for predictions")
+    shadow_db_url: str          = Field("",          description="Postgres DSN for shadow comparisons (defaults to prediction_db)")
     dlq_max_size: int           = Field(10000,       description="Max DLQ entries before eviction")
 
     # ── API security ───────────────────────────────────────────────────────────
@@ -52,7 +53,11 @@ class Settings(BaseSettings):
     # ── MLflow ─────────────────────────────────────────────────────────────────
     mlflow_tracking_uri: str    = Field(
         f"sqlite:///{_ROOT / 'mlflow.db'}",
-        description="MLflow tracking URI",
+        description="MLflow tracking URI (Postgres DSN injected in production)",
+    )
+    mlflow_artifact_root: str   = Field(
+        "s3://nyc-airbnb-models-698172256228/mlflow/",
+        description="MLflow default artifact root — S3 bucket for production model artifacts",
     )
     mlflow_ui_url: str          = Field("http://localhost:5000", description="MLflow UI URL")
 
@@ -83,6 +88,11 @@ class Settings(BaseSettings):
         return v.lower()
 
     # ── Derived helpers ────────────────────────────────────────────────────────
+
+    @property
+    def shadow_db_url_effective(self) -> str:
+        """Shadow DB connection — falls back to prediction_db if SHADOW_DB_URL is unset."""
+        return self.shadow_db_url if self.shadow_db_url else self.prediction_db
 
     @property
     def api_keys_set(self) -> set[str]:

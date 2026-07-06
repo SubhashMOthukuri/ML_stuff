@@ -30,3 +30,5 @@ structlog>=24.0.0
 # ── Prometheus metrics ────────────────────────────────────────────────────────
 # Cap at <8.0.0: v8.x requires starlette>=1.0.0 which does not exist yet
 prometheus-fastapi-instrumentator>=7.0.0,<8.0.0
+# ── PostgreSQL driver ─────────────────────────────────────────────────────────
+psycopg2-binary>=2.9

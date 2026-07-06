@@ -28,6 +28,7 @@ import shutil
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -35,13 +36,15 @@ import numpy as np
 import pandas as pd
 import onnxruntime as rt
 
+from src.config import settings
+
 logger = logging.getLogger(__name__)
 
-BASE_DIR         = Path(__file__).resolve().parents[2]
-MODEL_DIR        = BASE_DIR / "models" / "nyc"
-CHALLENGER_ONNX  = MODEL_DIR / "challenger.onnx"
+BASE_DIR          = Path(__file__).resolve().parents[2]
+MODEL_DIR         = BASE_DIR / "models" / "nyc"
+CHALLENGER_ONNX   = MODEL_DIR / "challenger.onnx"
 CHALLENGER_SCALER = MODEL_DIR / "challenger_scaler.pkl"
-SHADOW_DB        = BASE_DIR / "data" / "shadow_comparisons.db"
+_SHADOW_DB_DEFAULT = str(BASE_DIR / "data" / "shadow_comparisons.db")
 
 # Agreement bands for stats
 TIGHT_BAND_PCT = 5.0    # ±5%  → "tight" agreement
@@ -67,15 +70,18 @@ class ShadowPredictor:
         shadow.run_async(raw, result["price_usd"], request_id, borough, room_type)
     """
 
-    def __init__(self, db_path: Path = SHADOW_DB):
+    def __init__(self, db_path: str | None = None):
         self._session: rt.InferenceSession | None = None
         self._input_name = ""
         self._challenger_scaler = None
         self._champion = None          # injected after init
         self._session_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="shadow")
-        self._db = db_path
+        self._db  = str(db_path) if db_path else settings.shadow_db_url_effective
+        self._is_pg = self._db.startswith(("postgresql://", "postgres://"))
         self._db_lock = threading.Lock()
+        if not self._is_pg:
+            Path(self._db).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
         self._load()
 
@@ -232,28 +238,95 @@ class ShadowPredictor:
         except Exception as exc:
             logger.debug("Shadow inference error (suppressed): %s", exc)
 
-    # ── SQLite ─────────────────────────────────────────────────────────────────
+    # ── DB helpers ─────────────────────────────────────────────────────────────
+
+    @contextmanager
+    def _conn(self):
+        """Yield an open connection; commit on success, rollback on exception."""
+        if self._is_pg:
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(self._db)
+            conn.cursor_factory = psycopg2.extras.RealDictCursor
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+        else:
+            conn = sqlite3.connect(self._db, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+    def _q(self, sql: str) -> str:
+        return sql.replace("?", "%s") if self._is_pg else sql
+
+    def _execute(self, conn, sql: str, params: tuple = ()):
+        if self._is_pg:
+            cur = conn.cursor()
+            cur.execute(self._q(sql), params)
+            return cur
+        return conn.execute(self._q(sql), params)
+
+    def _fetchall(self, result) -> list[dict]:
+        return [dict(r) for r in result.fetchall()]
+
+    # ── schema ─────────────────────────────────────────────────────────────────
 
     def _init_db(self) -> None:
-        self._db.parent.mkdir(parents=True, exist_ok=True)
-        with self._db_lock, sqlite3.connect(str(self._db)) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS shadow_comparisons (
-                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp         TEXT NOT NULL,
-                    request_id        TEXT,
-                    champion_price    REAL,
-                    challenger_price  REAL,
-                    diff_pct          REAL,
-                    borough           TEXT,
-                    room_type         TEXT,
-                    features_json     TEXT
-                )
-            """)
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_shadow_ts "
-                "ON shadow_comparisons(timestamp)"
-            )
+        _create_sqlite = """
+CREATE TABLE IF NOT EXISTS shadow_comparisons (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp         TEXT NOT NULL,
+    request_id        TEXT,
+    champion_price    REAL,
+    challenger_price  REAL,
+    diff_pct          REAL,
+    borough           TEXT,
+    room_type         TEXT,
+    features_json     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_ts ON shadow_comparisons(timestamp);
+"""
+        _create_pg = """
+CREATE TABLE IF NOT EXISTS shadow_comparisons (
+    id                SERIAL PRIMARY KEY,
+    timestamp         TEXT NOT NULL,
+    request_id        TEXT,
+    champion_price    REAL,
+    challenger_price  REAL,
+    diff_pct          REAL,
+    borough           TEXT,
+    room_type         TEXT,
+    features_json     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_ts ON shadow_comparisons(timestamp);
+"""
+        if self._is_pg:
+            import psycopg2
+            conn = psycopg2.connect(self._db)
+            conn.autocommit = True
+            try:
+                with conn.cursor() as cur:
+                    for stmt in _create_pg.strip().split(";"):
+                        stmt = stmt.strip()
+                        if stmt:
+                            cur.execute(stmt)
+            finally:
+                conn.close()
+        else:
+            with sqlite3.connect(self._db, check_same_thread=False) as conn:
+                conn.executescript(_create_sqlite)
 
     def _write(
         self,
@@ -265,23 +338,22 @@ class ShadowPredictor:
         room_type: str,
         features_json: dict,
     ) -> None:
-        with self._db_lock, sqlite3.connect(str(self._db)) as conn:
-            conn.execute(
-                """INSERT INTO shadow_comparisons
+        sql = """INSERT INTO shadow_comparisons
                    (timestamp, request_id, champion_price, challenger_price,
                     diff_pct, borough, room_type, features_json)
-                   VALUES (?,?,?,?,?,?,?,?)""",
-                (
-                    datetime.now(timezone.utc).isoformat(),
-                    request_id,
-                    round(champion_price, 2),
-                    round(challenger_price, 2),
-                    round(diff_pct, 4),
-                    borough,
-                    room_type,
-                    json.dumps(features_json),
-                ),
-            )
+                   VALUES (?,?,?,?,?,?,?,?)"""
+        params = (
+            datetime.now(timezone.utc).isoformat(),
+            request_id,
+            round(champion_price, 2),
+            round(challenger_price, 2),
+            round(diff_pct, 4),
+            borough,
+            room_type,
+            json.dumps(features_json),
+        )
+        with self._db_lock, self._conn() as conn:
+            self._execute(conn, sql, params)
 
     # ── stats ──────────────────────────────────────────────────────────────────
 
@@ -292,16 +364,17 @@ class ShadowPredictor:
         """
         since = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
 
-        with self._db_lock, sqlite3.connect(str(self._db)) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """SELECT champion_price, challenger_price, diff_pct, borough, room_type
-                   FROM shadow_comparisons WHERE timestamp >= ?""",
+        with self._db_lock, self._conn() as conn:
+            result = self._execute(
+                conn,
+                "SELECT champion_price, challenger_price, diff_pct, borough, room_type "
+                "FROM shadow_comparisons WHERE timestamp >= ?",
                 (since,),
-            ).fetchall()
-            total_all = conn.execute(
-                "SELECT COUNT(*) FROM shadow_comparisons"
-            ).fetchone()[0]
+            )
+            rows = self._fetchall(result)
+            total_result = self._execute(conn, "SELECT COUNT(*) FROM shadow_comparisons")
+            total_row    = total_result.fetchone()
+            total_all    = list(total_row.values())[0] if isinstance(total_row, dict) else total_row[0]
 
         n = len(rows)
         base = {
@@ -466,8 +539,8 @@ class ShadowPredictor:
 
     def clear_comparisons(self) -> int:
         """Delete all rows from shadow_comparisons. Returns count deleted."""
-        with self._db_lock, sqlite3.connect(str(self._db)) as conn:
-            cur = conn.execute("DELETE FROM shadow_comparisons")
+        with self._db_lock, self._conn() as conn:
+            cur = self._execute(conn, "DELETE FROM shadow_comparisons")
             return cur.rowcount
 
 
