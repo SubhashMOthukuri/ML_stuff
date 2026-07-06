@@ -260,7 +260,14 @@ resource "aws_secretsmanager_secret" "app" {
 }
 
 locals {
-  db_dsn = "postgresql://nyc_app:${var.db_password}@${aws_db_instance.predictions.endpoint}/nyc"
+  # URL-encode characters that break DSN parsing (@, #, /, ?)
+  db_password_url = replace(replace(replace(replace(
+    var.db_password,
+    "@", "%40"),
+    "#", "%23"),
+    "/", "%2F"),
+    "?", "%3F")
+  db_dsn = "postgresql://nyc_app:${local.db_password_url}@${aws_db_instance.predictions.endpoint}/nyc"
 }
 
 resource "aws_secretsmanager_secret_version" "app" {
