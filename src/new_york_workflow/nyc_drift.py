@@ -29,6 +29,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from src.metrics import prom_psi_score, prom_drift_status
+
 logger = logging.getLogger(__name__)
 
 BASE_DIR   = Path(__file__).resolve().parents[2]
@@ -152,6 +154,13 @@ class DriftMonitor:
         else:
             overall = "ok"
 
+        # Push PSI scores to Prometheus
+        for feat, info in feat_drift.items():
+            prom_psi_score.labels(feature=feat, feature_type="numeric").set(info["psi"])
+        for col, info in cat_drift.items():
+            prom_psi_score.labels(feature=col, feature_type="categorical").set(info["psi"])
+        prom_drift_status.set({"ok": 0, "warning": 1, "critical": 2}.get(overall, 0))
+
         return DriftReport(
             checked_at=now.isoformat(), window_hours=window_hours, n_samples=n,
             status=overall, prediction_drift=pred_drift,
@@ -162,17 +171,32 @@ class DriftMonitor:
     # ── private ───────────────────────────────────────────────────────────────
 
     def _load_recent(self, since_iso: str) -> list[dict]:
-        if not self._db.exists():
+        is_pg = str(self._db).startswith(("postgresql://", "postgres://"))
+        if not is_pg and not self._db.exists():
             return []
         try:
-            conn = sqlite3.connect(str(self._db))
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT features_json, predicted_price, borough, room_type FROM predictions "
-                "WHERE timestamp >= ? AND cache_hit = 0",
-                (since_iso,),
-            ).fetchall()
-            conn.close()
+            if is_pg:
+                import psycopg2, psycopg2.extras
+                conn = psycopg2.connect(str(self._db))
+                conn.cursor_factory = psycopg2.extras.RealDictCursor
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT features_json, predicted_price, borough, room_type FROM predictions "
+                    "WHERE timestamp >= %s AND cache_hit = false",
+                    (since_iso,),
+                )
+                rows = cur.fetchall()
+                conn.close()
+            else:
+                conn = sqlite3.connect(str(self._db))
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT features_json, predicted_price, borough, room_type FROM predictions "
+                    "WHERE timestamp >= ? AND cache_hit = 0",
+                    (since_iso,),
+                ).fetchall()
+                conn.close()
+
             out = []
             for r in rows:
                 try:

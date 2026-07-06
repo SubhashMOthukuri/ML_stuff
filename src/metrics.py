@@ -11,6 +11,8 @@ Custom ML metrics exposed to Prometheus:
   nyc_canary_traffic_pct         gauge
   nyc_active_alerts              gauge    {severity}
   nyc_dlq_size                   gauge
+  nyc_psi_score                  gauge    {feature, feature_type}
+  nyc_drift_status               gauge    (0=ok, 1=warning, 2=critical)
 """
 
 import threading
@@ -47,6 +49,17 @@ prom_active_alerts = Gauge(
 prom_dlq_size = Gauge(
     "nyc_dlq_size",
     "Dead letter queue depth",
+)
+
+prom_psi_score = Gauge(
+    "nyc_psi_score",
+    "Population Stability Index per feature (0=no drift, 0.1=warning, 0.2=critical)",
+    ["feature", "feature_type"],
+)
+
+prom_drift_status = Gauge(
+    "nyc_drift_status",
+    "Overall drift status: 0=ok, 1=warning, 2=critical",
 )
 
 
