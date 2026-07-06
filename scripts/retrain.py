@@ -70,6 +70,11 @@ MLFLOW_URI           = os.getenv("MLFLOW_TRACKING_URI", f"sqlite:///{BASE_DIR / 
 MLFLOW_ARTIFACT_ROOT = os.getenv("MLFLOW_ARTIFACT_ROOT", "")
 MODEL_NAME = "nyc-airbnb-xgboost"
 
+# S3 training data bucket — 3 pre-uploaded InsideAirbnb snapshots rotated daily
+S3_TRAINING_BUCKET  = "nyc-airbnb-models-698172256228"
+S3_TRAINING_PREFIX  = "training-data"
+S3_SNAPSHOT_COUNT   = 3   # listings_0.csv.gz, listings_1.csv.gz, listings_2.csv.gz
+
 TARGET      = "log_price"
 DROP_COLS   = ["id", "price", "log_price", "neighbourhood_cleansed"]
 RANDOM_SEED = 42
@@ -194,6 +199,60 @@ def download_fresh_data() -> Path:
     return out_path
 
 
+def download_s3_snapshot(index: int | None = None) -> Path:
+    """
+    Download one of the three pre-uploaded InsideAirbnb snapshots from S3.
+
+    Index defaults to date.today().toordinal() % S3_SNAPSHOT_COUNT — rotates
+    daily so consecutive nightly runs train on different data vintages.
+
+    Snapshots are stored as:
+      s3://nyc-airbnb-models-698172256228/training-data/listings_0.csv  (Feb)
+      s3://nyc-airbnb-models-698172256228/training-data/listings_1.csv  (March)
+      s3://nyc-airbnb-models-698172256228/training-data/listings_2.csv  (April)
+
+    Upload command (one-time):
+      aws s3 cp feb.csv   s3://nyc-airbnb-models-698172256228/training-data/listings_0.csv
+      aws s3 cp march.csv s3://nyc-airbnb-models-698172256228/training-data/listings_1.csv
+      aws s3 cp April.csv s3://nyc-airbnb-models-698172256228/training-data/listings_2.csv
+
+    Returns:
+        Path to the downloaded CSV file.
+
+    Raises:
+        RuntimeError: If the S3 download fails.
+    """
+    import boto3
+    from botocore.exceptions import ClientError
+
+    if index is None:
+        index = date.today().toordinal() % S3_SNAPSHOT_COUNT
+
+    s3_key   = f"{S3_TRAINING_PREFIX}/listings_{index}.csv"
+    raw_dir  = DATA_DIR / "raw_snapshots"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    out_path = raw_dir / f"listings_s3_{index}.csv"
+
+    if out_path.exists():
+        logger.info("Re-using cached S3 snapshot index=%d: %s", index, out_path)
+        return out_path
+
+    logger.info("Downloading s3://%s/%s → %s", S3_TRAINING_BUCKET, s3_key, out_path)
+    try:
+        boto3.client("s3").download_file(S3_TRAINING_BUCKET, s3_key, str(out_path))
+    except ClientError as exc:
+        raise RuntimeError(
+            f"S3 download failed for s3://{S3_TRAINING_BUCKET}/{s3_key}: {exc}\n"
+            f"Upload snapshots first:\n"
+            f"  aws s3 cp feb.csv   s3://{S3_TRAINING_BUCKET}/{S3_TRAINING_PREFIX}/listings_0.csv\n"
+            f"  aws s3 cp march.csv s3://{S3_TRAINING_BUCKET}/{S3_TRAINING_PREFIX}/listings_1.csv\n"
+            f"  aws s3 cp April.csv s3://{S3_TRAINING_BUCKET}/{S3_TRAINING_PREFIX}/listings_2.csv"
+        ) from exc
+
+    logger.info("Downloaded %.1f MB → %s", out_path.stat().st_size / 1e6, out_path)
+    return out_path
+
+
 # ── production pipeline (cleaning + feature engineering) ──────────────────────
 
 def _load_module(alias: str, rel_path: str):
@@ -265,23 +324,28 @@ def clean_and_engineer(raw_path: Path) -> pd.DataFrame:
 
 # ── training data loader ───────────────────────────────────────────────────────
 
-def load_training_data(no_download: bool = False) -> pd.DataFrame:
+def load_training_data(
+    no_download: bool = False,
+    s3_snapshot: bool = False,
+    s3_index: int | None = None,
+) -> pd.DataFrame:
     """
     Load the training dataset.
 
-    With no_download=False (default): download the latest InsideAirbnb NYC
-    snapshot and run it through the full cleaning + feature engineering pipeline.
+    no_download=True  : use existing engineered_features.csv on disk (fastest, no network)
+    s3_snapshot=True  : download one of 3 pre-uploaded InsideAirbnb CSVs from S3
+                        (rotates by date unless s3_index is given explicitly)
+    default           : auto-download the latest InsideAirbnb NYC snapshot
 
-    With no_download=True: read the existing engineered_features.csv on disk
-    (same fallback behavior as the original retrain.py).
-
-    In both cases, the top 1% of prices is capped to match the original
-    training setup.
+    In all cases, the top 1% of prices is capped to match the original training setup.
     """
     if no_download:
         path = DATA_DIR / "engineered_features.csv"
         logger.info("--no-download: using existing %s", path)
         df = pd.read_csv(path)
+    elif s3_snapshot:
+        raw_path = download_s3_snapshot(index=s3_index)
+        df = clean_and_engineer(raw_path)
     else:
         raw_path = download_fresh_data()
         df = clean_and_engineer(raw_path)
@@ -526,7 +590,14 @@ def rollback(version: int) -> None:
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
-def main(force: bool = False, rollback_version: int | None = None, no_download: bool = False, skip_optuna: bool = False):
+def main(
+    force: bool = False,
+    rollback_version: int | None = None,
+    no_download: bool = False,
+    skip_optuna: bool = False,
+    s3_snapshot: bool = False,
+    s3_index: int | None = None,
+):
     if rollback_version is not None:
         rollback(rollback_version)
         return
@@ -543,7 +614,7 @@ def main(force: bool = False, rollback_version: int | None = None, no_download: 
     feature_list = report["feature_cols"]
 
     # Load + split
-    df = load_training_data(no_download=no_download)
+    df = load_training_data(no_download=no_download, s3_snapshot=s3_snapshot, s3_index=s3_index)
     X, y = prepare_xy(df, feature_list)
     X_train, X_test, y_train, y_test, _, df_test = train_test_split(
         X, y, df, test_size=TEST_SIZE, random_state=RANDOM_SEED
@@ -667,6 +738,24 @@ if __name__ == "__main__":
         "--skip-optuna", action="store_true",
         help="Skip Optuna hyperparameter search and use fixed XGB_PARAMS (faster runs, CI testing)",
     )
+    parser.add_argument(
+        "--s3-snapshot", action="store_true",
+        help=(
+            "Download training data from S3 instead of InsideAirbnb. "
+            "Rotates through listings_0/1/2.csv daily by default. "
+            "Use with --s3-index to pick a specific snapshot."
+        ),
+    )
+    parser.add_argument(
+        "--s3-index", type=int, choices=[0, 1, 2], default=None,
+        help="Override S3 snapshot index (0=Feb, 1=March, 2=April). Defaults to date-based rotation.",
+    )
     args = parser.parse_args()
-    main(force=args.force, rollback_version=args.rollback, no_download=args.no_download,
-         skip_optuna=args.skip_optuna)
+    main(
+        force=args.force,
+        rollback_version=args.rollback,
+        no_download=args.no_download,
+        skip_optuna=args.skip_optuna,
+        s3_snapshot=args.s3_snapshot,
+        s3_index=args.s3_index,
+    )

@@ -15,8 +15,7 @@ on:
 
 env:
   PYTHONPATH: .
-  PREDICTION_DB: data/predictions.db
-  MLFLOW_TRACKING_URI: mlruns
+  MLFLOW_ARTIFACT_ROOT: "s3://nyc-airbnb-models-698172256228/mlflow/"
 
 jobs:
 
@@ -120,35 +119,41 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            us-east-2
+
       - name: Install dependencies
         run: pip install --no-cache-dir -r requirements.txt
 
+      - name: Download current champion model + baseline from S3
+        run: aws s3 sync s3://nyc-airbnb-models-698172256228/nyc/ models/nyc/
+
       - name: Rollback (if requested)
         if: github.event.inputs.rollback_version != ''
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
         run: |
           python scripts/retrain.py --rollback ${{ github.event.inputs.rollback_version }}
+          aws s3 sync models/nyc/ s3://nyc-airbnb-models-698172256228/nyc/
 
-      - name: Run retraining pipeline
+      - name: Run retraining pipeline (S3 snapshot, date-rotated)
         if: github.event.inputs.rollback_version == ''
         id: retrain
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
         run: |
-          # retrain.py downloads the latest InsideAirbnb NYC snapshot automatically,
-          # runs it through the production cleaning + feature engineering pipeline,
-          # then trains and validates. Pass --no-download to use existing data instead.
-          python scripts/retrain.py ${{ github.event.inputs.force_retrain == 'true' && '--force' || '' }}
-          echo "::set-output name=retrain_status::success"
+          FORCE_FLAG=${{ github.event.inputs.force_retrain == 'true' && '--force' || '' }}
+          python scripts/retrain.py --s3-snapshot --skip-optuna $FORCE_FLAG
+          echo "retrain_status=success" >> $GITHUB_OUTPUT
         continue-on-error: true
 
-      - name: Upload new model artifacts
+      - name: Push promoted model to S3 (only on gate pass)
         if: steps.retrain.outputs.retrain_status == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: model-artifacts
-          path: |
-            models/nyc/nyc_xgb_model.pkl
-            models/nyc/nyc_xgb_model.onnx
-            models/nyc/nyc_scaler.pkl
-            models/nyc/baseline_stats.json
+        run: aws s3 sync models/nyc/ s3://nyc-airbnb-models-698172256228/nyc/
 
       - name: Comment on drift issue if retrain failed
         if: steps.retrain.outcome == 'failure'
