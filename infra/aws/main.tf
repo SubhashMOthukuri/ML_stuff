@@ -258,7 +258,7 @@ resource "aws_db_instance" "predictions" {
 
 resource "aws_s3_bucket" "models" {
   bucket        = "${var.app_name}-models-${data.aws_caller_identity.current.account_id}"
-  force_destroy = false
+  force_destroy = true
   tags          = { Name = "${var.app_name}-models" }
 }
 
