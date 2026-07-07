@@ -235,39 +235,59 @@ class NYCAirbnbPredictorONNX:
 
     def _apply_business_rules(self, price_usd: float, raw: dict) -> tuple[float, list[str]]:
         """
-        Post-prediction constraints for extreme OOD inputs the model hasn't seen
-        enough training examples of to price correctly. Conservative thresholds:
-        only engage on clear physical/market violations, not to second-guess the model.
+        Post-prediction constraints calibrated to NYC Airbnb market economics.
+        Rules are deliberately non-linear: market value collapses at extreme
+        overcrowding/bad ratings, it doesn't just decay by a fixed percentage.
+
+        Order matters: shared room cap first, then overcrowding, then rating.
+        Each successive rule applies to the already-adjusted price.
         """
         applied: list[str] = []
-        room_type        = raw.get("room_type", "")
-        accommodates     = int(raw.get("accommodates", 1))
-        bedrooms         = max(float(raw.get("bedrooms", 1)), 1.0)
-        n_reviews        = int(raw.get("number_of_reviews", 0))
-        rating           = float(raw.get("review_scores_rating", 0.0))
-        guests_per_bed   = accommodates / bedrooms
+        room_type      = raw.get("room_type", "")
+        accommodates   = int(raw.get("accommodates", 1))
+        bedrooms       = max(float(raw.get("bedrooms", 1)), 1.0)
+        n_reviews      = int(raw.get("number_of_reviews", 0))
+        rating         = float(raw.get("review_scores_rating", 0.0))
+        guests_per_bed = accommodates / bedrooms
 
-        # Shared room market cap: InsideAirbnb NYC data 99th pct ≈ $300
-        if room_type == "Shared room" and price_usd > 350:
-            price_usd = 350.0
-            applied.append("shared_room_cap_$350")
+        # ── 1. Shared room hard cap ───────────────────────────────────────────
+        # NYC InsideAirbnb: shared room median $75, 95th pct $120.
+        # $350 is still absurd — no traveler pays $10,500/month to share a room.
+        if room_type == "Shared room" and price_usd > 120:
+            price_usd = 120.0
+            applied.append("shared_room_cap_$120")
 
-        # Severe overcrowding: progressive discount above 4 guests/bedroom
-        if guests_per_bed > 4:
-            excess   = guests_per_bed - 4
-            discount = min(0.30, excess * 0.08)  # 8% per excess guest, max 30%
-            price_usd *= (1.0 - discount)
-            applied.append(f"overcrowding_penalty_{discount:.0%}")
+        # ── 2. Overcrowding — non-linear value collapse ───────────────────────
+        # Value doesn't decay linearly when a listing becomes genuinely unlivable.
+        # > 5 guests/bed → backpacker floor (max of $85 or 35% of predicted).
+        # 3-5 guests/bed → seriously cramped → 35% discount.
+        # ≤ 3 guests/bed → normal NYC density, no penalty.
+        if guests_per_bed > 5:
+            price_usd = max(85.0, price_usd * 0.35)
+            applied.append(f"severe_overcrowding_floor_{guests_per_bed:.1f}gpb")
+        elif guests_per_bed > 3:
+            price_usd *= 0.65
+            applied.append(f"overcrowding_penalty_35%_{guests_per_bed:.1f}gpb")
 
-        # Low-rating penalty — rating=0 means no reviews, not a bad rating
-        if n_reviews > 5 and 0 < rating < 3.5:
-            price_usd *= 0.75
-            applied.append("very_low_rating_penalty_25%")
+        # ── 3. Rating penalties — 4-tier, reviewed listings only ─────────────
+        # rating=0 means no reviews (new listing), not a terrible listing.
+        # Tiers match how Airbnb search ranking and conversion rate actually behave:
+        #   sub-4.0★ → risk signal; sub-3.0★ → near-unbookable without discount;
+        #   sub-2.5★ → disaster tier; hosts need to beg at 40-55% off to convert.
+        if n_reviews > 5 and 0 < rating < 2.5:
+            price_usd *= 0.45   # 55% off — disaster tier
+            applied.append("disaster_rating_penalty_55%")
+        elif n_reviews > 5 and 0 < rating < 3.0:
+            price_usd *= 0.60   # 40% off
+            applied.append("very_low_rating_penalty_40%")
+        elif n_reviews > 5 and 0 < rating < 3.5:
+            price_usd *= 0.72   # 28% off
+            applied.append("low_rating_penalty_28%")
         elif n_reviews > 5 and 0 < rating < 4.0:
-            price_usd *= 0.90
-            applied.append("low_rating_penalty_10%")
+            price_usd *= 0.85   # 15% off — still below-average on Airbnb
+            applied.append("below_avg_rating_penalty_15%")
 
-        # Never let rules push below the API's own floor (avoids 422 on stacked discounts)
+        # Never let rules push below the API's own floor
         price_usd = max(price_usd, 10.0)
 
         return round(price_usd, 2), applied
