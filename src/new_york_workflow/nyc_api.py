@@ -170,7 +170,7 @@ async def lifespan(app: FastAPI):
         "Ready | backend=%s  R²=%.4f  cache=%s  store=%s  dlq=%s  shadow=%s  ab=%s  canary=%s",
         info["inference_backend"], _r2_test,
         "redis" if cache._client else "disabled",
-        store._path,
+        store.safe_label,
         "redis" if dlq._client else "in-memory",
         "active" if shadow.active else "disabled",
         f"active({ab_test.test_id})" if ab_test.active else "idle",

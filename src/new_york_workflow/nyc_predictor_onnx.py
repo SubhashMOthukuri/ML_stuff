@@ -55,8 +55,11 @@ class NYCAirbnbPredictorONNX:
         self.scaler       = _load("nyc_scaler.pkl")
         self.feature_list = _load("nyc_feature_list.pkl")
         neigh_meta        = _load("nyc_neighbourhood_means.pkl")
-        self.neighbourhood_means = neigh_meta["means"]
-        self.global_mean         = neigh_meta["global_mean"]
+        self.neighbourhood_means   = neigh_meta["means"]
+        self.global_mean           = neigh_meta["global_mean"]
+        # medians/global_median absent in artifacts saved before this feature existed
+        self.neighbourhood_medians = neigh_meta.get("medians", {})
+        self.global_median         = neigh_meta.get("global_median", 0.0)
 
         report_path = model_dir / "nyc_training_report.json"
         self._report = json.loads(report_path.read_text()) if report_path.exists() else {}
@@ -194,7 +197,8 @@ class NYCAirbnbPredictorONNX:
         r["borough_Staten Island"] = int(borough == "Staten Island")
 
         neighbourhood = raw.get("neighbourhood", "")
-        r["neighbourhood_price_rank"] = self.neighbourhood_means.get(neighbourhood, self.global_mean)
+        r["neighbourhood_price_rank"]    = self.neighbourhood_means.get(neighbourhood, self.global_mean)
+        r["neighbourhood_median_price"]  = self.neighbourhood_medians.get(neighbourhood, self.global_median)
 
         r["accommodates_sq"] = r["accommodates"] ** 2
         r["bedrooms_sq"]     = r["bedrooms"] ** 2

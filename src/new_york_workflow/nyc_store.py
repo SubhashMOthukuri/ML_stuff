@@ -88,7 +88,12 @@ class RequestStore:
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
 
         self._init_schema()
-        logger.info("RequestStore ready: %s", "postgres" if self._is_pg else self._path)
+        logger.info("RequestStore ready: %s", self.safe_label)
+
+    @property
+    def safe_label(self) -> str:
+        """Connection identity for logs — never the raw DSN (would leak the DB password)."""
+        return "postgres" if self._is_pg else self._path
 
     # ── connection helpers ─────────────────────────────────────────────────────
 

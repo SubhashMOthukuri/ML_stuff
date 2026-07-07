@@ -360,6 +360,41 @@ def load_training_data(
     return df
 
 
+def add_neighbourhood_target_encoding(
+    df: pd.DataFrame, train_idx: pd.Index
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Add neighbourhood_price_rank (train-only mean log_price) and
+    neighbourhood_median_price (train-only median $ price) columns.
+
+    Must be computed on train_idx only — using the full dataset would leak
+    test-set prices into a feature the model sees at train time.
+
+    Returns:
+        (df with the two columns added, artefact dict for nyc_neighbourhood_means.pkl)
+    """
+    neigh_mean    = df.loc[train_idx].groupby("neighbourhood_cleansed")["log_price"].mean()
+    neigh_median  = df.loc[train_idx].groupby("neighbourhood_cleansed")["price"].median()
+    global_mean   = float(df.loc[train_idx]["log_price"].mean())
+    global_median = float(df.loc[train_idx]["price"].median())
+
+    df = df.copy()
+    df["neighbourhood_price_rank"] = (
+        df["neighbourhood_cleansed"].map(neigh_mean).fillna(global_mean)
+    )
+    df["neighbourhood_median_price"] = (
+        df["neighbourhood_cleansed"].map(neigh_median).fillna(global_median)
+    )
+
+    artefact = {
+        "means":        neigh_mean.to_dict(),
+        "global_mean":  global_mean,
+        "medians":      neigh_median.to_dict(),
+        "global_median": global_median,
+    }
+    return df, artefact
+
+
 def prepare_xy(df: pd.DataFrame, feature_list: list[str]):
     X = df[feature_list].fillna(0)
     y = df[TARGET]
@@ -609,12 +644,19 @@ def main(
         sys.exit(1)
     baseline = json.loads(baseline_path.read_text())
 
-    # Feature list from original training report
-    report       = json.loads((MODEL_DIR / "nyc_training_report.json").read_text())
-    feature_list = report["feature_cols"]
-
-    # Load + split
+    # Load data, then split BEFORE target-encoding neighbourhood —
+    # same random_state/test_size as the split below reproduces identical
+    # train row IDs, so the encoding never sees test-set prices.
     df = load_training_data(no_download=no_download, s3_snapshot=s3_snapshot, s3_index=s3_index)
+    train_idx, _ = train_test_split(df.index, test_size=TEST_SIZE, random_state=RANDOM_SEED)
+    df, neighbourhood_means_artefact = add_neighbourhood_target_encoding(df, train_idx)
+
+    # Derived fresh from the engineered dataframe every run (not a frozen JSON
+    # snapshot) so any column 2_feature_engineering.py/_engineer() adds is
+    # picked up automatically — this is what "activates" dormant features that
+    # were added to the engineering step but not yet trained on.
+    feature_list = [c for c in df.columns if c not in DROP_COLS]
+
     X, y = prepare_xy(df, feature_list)
     X_train, X_test, y_train, y_test, _, df_test = train_test_split(
         X, y, df, test_size=TEST_SIZE, random_state=RANDOM_SEED
@@ -653,6 +695,10 @@ def main(
             pickle.dump(model, f)
         with open(MODEL_DIR / "nyc_scaler.pkl", "wb") as f:
             pickle.dump(scaler, f)
+        with open(MODEL_DIR / "nyc_neighbourhood_means.pkl", "wb") as f:
+            pickle.dump(neighbourhood_means_artefact, f)
+        with open(MODEL_DIR / "nyc_feature_list.pkl", "wb") as f:
+            pickle.dump(feature_list, f)
         export_onnx(model, feature_list, MODEL_DIR / "nyc_xgb_model.onnx")
         version = register_with_mlflow(
             model, metrics, feature_list, scaler,

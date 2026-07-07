@@ -247,7 +247,11 @@ resource "aws_db_instance" "predictions" {
   publicly_accessible    = false
   multi_az               = true
   deletion_protection    = false
-  backup_retention_period = 7
+  # Free Tier restriction on this AWS account caps backup retention below 7
+  # days (7 was the intended production value — see bugs.txt). Reduced to 1
+  # (the max this account's Free Tier plan accepts) to unblock provisioning;
+  # revisit once the account is upgraded off Free Tier.
+  backup_retention_period = 1
   backup_window           = "03:00-04:00"
   maintenance_window      = "Mon:04:00-Mon:05:00"
 
