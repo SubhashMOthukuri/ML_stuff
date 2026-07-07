@@ -6,7 +6,7 @@ export function useMetrics(intervalMs = 5000) {
 
   const fetchMetrics = useCallback(async () => {
     try {
-      const r = await fetch('/api/metrics')
+      const r = await fetch('/api/metrics/summary')
       if (r.ok) setMetrics(await r.json())
     } catch {}
   }, [])
