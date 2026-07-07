@@ -263,7 +263,9 @@ class NYCAirbnbPredictorONNX:
         # 3-5 guests/bed → seriously cramped → 35% discount.
         # ≤ 3 guests/bed → normal NYC density, no penalty.
         if guests_per_bed > 5:
-            price_usd = max(85.0, price_usd * 0.35)
+            # Hard ceiling — value collapses at this density regardless of model output.
+            # min() caps from above; never raises a price that's already below $85.
+            price_usd = min(price_usd, 85.0)
             applied.append(f"severe_overcrowding_floor_{guests_per_bed:.1f}gpb")
         elif guests_per_bed > 3:
             price_usd *= 0.65
