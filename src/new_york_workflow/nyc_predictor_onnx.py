@@ -87,11 +87,13 @@ class NYCAirbnbPredictorONNX:
             self.session.run(None, {self.input_name: X_scaled})[0]
         ).flat[0])
         price_usd = float(np.expm1(log_price))
+        price_usd, rules = self._apply_business_rules(price_usd, raw)
 
         return {
             "price_usd": round(price_usd, 2),
             "price_str": f"${price_usd:,.0f}/night",
             "log_price": round(log_price, 4),
+            "business_rules_applied": rules,
         }
 
     def predict_batch(self, raws: list[dict]) -> list[dict]:
@@ -216,4 +218,56 @@ class NYCAirbnbPredictorONNX:
             (r["longitude"] - MIDTOWN_LON) ** 2
         ) * 111
 
+        # Occupancy density (mirrors 2_feature_engineering.py ratio additions)
+        guests_per_bedroom  = r["accommodates"] / max(r["bedrooms"],  1)
+        guests_per_bathroom = r["accommodates"] / max(r["bathrooms"], 1)
+        r["guests_per_bedroom"]   = guests_per_bedroom
+        r["guests_per_bathroom"]  = guests_per_bathroom
+        r["overcrowding_ratio"]   = max(0.0, guests_per_bedroom - 2.0)
+
+        # New interaction features (mirrors INTERACTION_PAIRS additions in 2_feature_engineering.py)
+        r["accommodates_x_bedrooms"]                          = r["accommodates"] * r["bedrooms"]
+        r["room_type_Private room_x_review_scores_rating"]   = r["room_type_Private room"] * r["review_scores_rating"]
+        r["room_type_Entire home/apt_x_bedrooms"]            = r["room_type_Entire home/apt"] * r["bedrooms"]
+        r["room_type_Shared room_x_accommodates"]            = r["room_type_Shared room"] * r["accommodates"]
+
         return r
+
+    def _apply_business_rules(self, price_usd: float, raw: dict) -> tuple[float, list[str]]:
+        """
+        Post-prediction constraints for extreme OOD inputs the model hasn't seen
+        enough training examples of to price correctly. Conservative thresholds:
+        only engage on clear physical/market violations, not to second-guess the model.
+        """
+        applied: list[str] = []
+        room_type        = raw.get("room_type", "")
+        accommodates     = int(raw.get("accommodates", 1))
+        bedrooms         = max(float(raw.get("bedrooms", 1)), 1.0)
+        n_reviews        = int(raw.get("number_of_reviews", 0))
+        rating           = float(raw.get("review_scores_rating", 0.0))
+        guests_per_bed   = accommodates / bedrooms
+
+        # Shared room market cap: InsideAirbnb NYC data 99th pct ≈ $300
+        if room_type == "Shared room" and price_usd > 350:
+            price_usd = 350.0
+            applied.append("shared_room_cap_$350")
+
+        # Severe overcrowding: progressive discount above 4 guests/bedroom
+        if guests_per_bed > 4:
+            excess   = guests_per_bed - 4
+            discount = min(0.30, excess * 0.08)  # 8% per excess guest, max 30%
+            price_usd *= (1.0 - discount)
+            applied.append(f"overcrowding_penalty_{discount:.0%}")
+
+        # Low-rating penalty — rating=0 means no reviews, not a bad rating
+        if n_reviews > 5 and 0 < rating < 3.5:
+            price_usd *= 0.75
+            applied.append("very_low_rating_penalty_25%")
+        elif n_reviews > 5 and 0 < rating < 4.0:
+            price_usd *= 0.90
+            applied.append("low_rating_penalty_10%")
+
+        # Never let rules push below the API's own floor (avoids 422 on stacked discounts)
+        price_usd = max(price_usd, 10.0)
+
+        return round(price_usd, 2), applied

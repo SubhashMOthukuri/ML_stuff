@@ -63,6 +63,12 @@ INTERACTION_PAIRS = [
     ('host_listings_count', 'review_scores_rating'),  # professional host quality
     ('accommodates',        'host_is_superhost'),     # superhost large listing
     ('minimum_nights',      'accommodates'),          # long-stay large apt
+    # Overcrowding signal: XGBoost can split on high accommodates with low bedrooms
+    ('accommodates',             'bedrooms'),
+    # Room-type quality: premium varies by type; shared rooms shouldn't scale with guest count
+    ('room_type_Private room',   'review_scores_rating'),
+    ('room_type_Entire home/apt','bedrooms'),
+    ('room_type_Shared room',    'accommodates'),
 ]
 
 # Columns to drop from raw data before output (redundant with kept columns)
@@ -306,6 +312,17 @@ def create_ratio_features(df):
     ) * 111   # rough km conversion (1 degree ≈ 111 km)
     created.append('dist_from_midtown')
     logger.info(f"   ✓  dist_from_midtown  =  Euclidean km from Midtown Manhattan")
+
+    # Occupancy density — encodes overcrowding signal the model couldn't learn from
+    # raw accommodates/bedrooms separately (6 guests in 1 bed ≠ 6 guests in 3 beds)
+    guests_per_bed = df['accommodates'] / df['bedrooms'].replace(0, 1)
+    df['guests_per_bedroom']  = guests_per_bed
+    df['guests_per_bathroom'] = df['accommodates'] / df['bathrooms'].replace(0, 1)
+    df['overcrowding_ratio']  = np.maximum(0.0, guests_per_bed - 2.0)
+    created += ['guests_per_bedroom', 'guests_per_bathroom', 'overcrowding_ratio']
+    logger.info(f"   ✓  guests_per_bedroom   = accommodates / max(bedrooms, 1)")
+    logger.info(f"   ✓  guests_per_bathroom  = accommodates / max(bathrooms, 1)")
+    logger.info(f"   ✓  overcrowding_ratio   = max(0, guests_per_bedroom - 2)")
 
     logger.info(f"\n   Created {len(created)} ratio features")
     logger.info(f"\n   Top 5 rows (ratio features only):")

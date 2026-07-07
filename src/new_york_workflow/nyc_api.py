@@ -330,13 +330,14 @@ class ListingFeatures(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    price_usd:  float
-    price_str:  str
-    log_price:  float
-    model:      str
-    r2_test:    float
-    request_id: str
-    cache_hit:  bool
+    price_usd:               float
+    price_str:               str
+    log_price:               float
+    model:                   str
+    r2_test:                 float
+    request_id:              str
+    cache_hit:               bool
+    business_rules_applied:  Optional[list] = None
 
 
 class BatchPredictionResponse(BaseModel):
