@@ -73,6 +73,14 @@ jobs:
           docker push 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb:${{ steps.tag.outputs.tag }}
           docker push 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb:latest
 
+      - name: Scan backend image for CVEs (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb:${{ steps.tag.outputs.tag }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL
+
   build-frontend:
     name: Build & Push Frontend
     runs-on: ubuntu-latest
@@ -105,6 +113,14 @@ jobs:
             frontend/
           docker push 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend:${{ steps.tag.outputs.tag }}
           docker push 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend:latest
+
+      - name: Scan frontend image for CVEs (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend:${{ steps.tag.outputs.tag }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL
 
   update-image-tag:
     name: Update Helm values & trigger ArgoCD

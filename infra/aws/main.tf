@@ -245,11 +245,48 @@ resource "aws_db_instance" "predictions" {
   vpc_security_group_ids = [aws_security_group.rds.id]
   skip_final_snapshot    = true
   publicly_accessible    = false
-  multi_az               = false
+  multi_az               = true
   deletion_protection    = false
+  backup_retention_period = 7
+  backup_window           = "03:00-04:00"
+  maintenance_window      = "Mon:04:00-Mon:05:00"
 
   tags = { Name = "${var.app_name}-predictions" }
 }
+
+# ── S3 (MLflow artifacts + model storage) ────────────────────────────────────
+
+resource "aws_s3_bucket" "models" {
+  bucket        = "${var.app_name}-models-${data.aws_caller_identity.current.account_id}"
+  force_destroy = false
+  tags          = { Name = "${var.app_name}-models" }
+}
+
+resource "aws_s3_bucket_versioning" "models" {
+  bucket = aws_s3_bucket.models.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "models" {
+  bucket = aws_s3_bucket.models.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "models" {
+  bucket                  = aws_s3_bucket.models.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+data "aws_caller_identity" "current" {}
 
 # ── Secrets Manager ───────────────────────────────────────────────────────────
 

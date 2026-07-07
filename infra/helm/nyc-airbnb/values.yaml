@@ -24,7 +24,8 @@ env:
   RATE_LIMIT: "100/minute"
   REDIS_HOST: redis
   REDIS_PORT: "6379"
-  OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4317"
+  # OTLP_ENDPOINT intentionally unset — otel-collector not deployed yet.
+  # App falls back to console exporter (no error spam). Wire in when collector is installed.
   OTEL_SERVICE_NAME: nyc-airbnb
   MLFLOW_ARTIFACT_ROOT: "s3://nyc-airbnb-models-698172256228/mlflow/"
   DD_ENV: prod
