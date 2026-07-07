@@ -16,6 +16,7 @@ import logging
 import numpy as np
 import pandas as pd
 import onnxruntime as rt
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -93,9 +94,11 @@ class NYCAirbnbPredictorONNX:
         price_usd, rules = self._apply_business_rules(price_usd, raw)
 
         return {
-            "price_usd": round(price_usd, 2),
-            "price_str": f"${price_usd:,.0f}/night",
-            "log_price": round(log_price, 4),
+            "price_usd":  round(price_usd, 2),
+            "price_low":  round(price_usd * 0.85, 2),
+            "price_high": round(price_usd * 1.15, 2),
+            "price_str":  f"${price_usd:,.0f}/night",
+            "log_price":  round(log_price, 4),
             "business_rules_applied": rules,
         }
 
@@ -234,6 +237,24 @@ class NYCAirbnbPredictorONNX:
         r["room_type_Private room_x_review_scores_rating"]   = r["room_type_Private room"] * r["review_scores_rating"]
         r["room_type_Entire home/apt_x_bedrooms"]            = r["room_type_Entire home/apt"] * r["bedrooms"]
         r["room_type_Shared room_x_accommodates"]            = r["room_type_Shared room"] * r["accommodates"]
+
+        # Temporal features — use current datetime so model sees what season/day it is
+        now = datetime.now()
+        checkin_date = raw.get("checkin_date")
+        if checkin_date:
+            try:
+                checkin = datetime.strptime(checkin_date, "%Y-%m-%d")
+                days_to_checkin = max(0, (checkin - now).days)
+            except ValueError:
+                days_to_checkin = 30
+        else:
+            days_to_checkin = 30   # neutral default (median advance booking)
+
+        r["month"]           = now.month
+        r["day_of_week"]     = now.weekday()            # 0=Mon, 6=Sun
+        r["is_peak_season"]  = int(now.month in {6, 7, 8, 12})
+        r["is_weekend"]      = int(now.weekday() >= 5)
+        r["days_to_checkin"] = days_to_checkin
 
         return r
 

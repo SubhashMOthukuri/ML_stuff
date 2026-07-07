@@ -71,6 +71,9 @@ INTERACTION_PAIRS = [
     ('room_type_Shared room',    'accommodates'),
 ]
 
+# NYC peak months: summer (Jun-Aug) + December holiday surge
+PEAK_MONTHS = {6, 7, 8, 12}
+
 # Columns to drop from raw data before output (redundant with kept columns)
 DROP_REDUNDANT_COLS = [
     'minimum_minimum_nights',          # corr=1.0 with minimum_nights
@@ -174,6 +177,40 @@ def apply_log_transforms(df):
     logger.info(f"\n   Created {len(created)} log features")
     logger.info(f"\n   Top 5 rows (log features only):")
     logger.info("\n" + df[created].head().to_string())
+    return df, created
+
+
+# ============================================================================
+# STEP 3.2 — TEMPORAL FEATURES
+# ============================================================================
+
+def create_temporal_features(df):
+    logger.info("\n" + "=" * 80)
+    logger.info("STEP 3.2 — TEMPORAL FEATURES")
+    logger.info("=" * 80)
+
+    df = df.copy()
+
+    if 'last_scraped' in df.columns:
+        scraped = pd.to_datetime(df['last_scraped'], errors='coerce').fillna(pd.Timestamp.now())
+    else:
+        logger.warning("   ⚠️  last_scraped not in data — using today for all rows")
+        scraped = pd.Series([pd.Timestamp.now()] * len(df), index=df.index)
+
+    df['month']           = scraped.dt.month.astype(int)
+    df['day_of_week']     = scraped.dt.dayofweek.astype(int)   # 0=Mon, 6=Sun
+    df['is_peak_season']  = scraped.dt.month.isin(PEAK_MONTHS).astype(int)
+    df['is_weekend']      = (scraped.dt.dayofweek >= 5).astype(int)
+    # days_to_checkin unknown at training time — use 30 (typical advance booking median)
+    df['days_to_checkin'] = 30
+
+    created = ['month', 'day_of_week', 'is_peak_season', 'is_weekend', 'days_to_checkin']
+
+    for col in created:
+        logger.info(f"   ✓  {col}")
+    logger.info(f"\n   Peak season rows : {df['is_peak_season'].sum():,} ({df['is_peak_season'].mean()*100:.1f}%)")
+    logger.info(f"   Weekend rows     : {df['is_weekend'].sum():,} ({df['is_weekend'].mean()*100:.1f}%)")
+    logger.info(f"\n   Created {len(created)} temporal features")
     return df, created
 
 
@@ -401,12 +438,13 @@ def main():
 
     dist_report              = analyse_distributions(df)
     df, log_cols             = apply_log_transforms(df)
+    df, temporal_cols        = create_temporal_features(df)
     df, neighbourhood_cols   = encode_neighbourhood(df)
     df, poly_cols            = create_polynomial_features(df)
     df, interaction_cols     = create_interaction_features(df)
     df, ratio_cols           = create_ratio_features(df)
 
-    all_new_cols = log_cols + neighbourhood_cols + poly_cols + interaction_cols + ratio_cols
+    all_new_cols = log_cols + temporal_cols + neighbourhood_cols + poly_cols + interaction_cols + ratio_cols
 
     # Drop redundant raw columns before output
     dropped = [c for c in DROP_REDUNDANT_COLS if c in df.columns]

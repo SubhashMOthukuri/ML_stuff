@@ -327,10 +327,13 @@ class ListingFeatures(BaseModel):
     has_air_conditioning:        bool  = False
     has_washer:                  bool  = False
     has_pool:                    bool  = False
+    checkin_date:                Optional[str] = Field(None, description="Check-in date (YYYY-MM-DD) — used to compute days_to_checkin")
 
 
 class PredictionResponse(BaseModel):
     price_usd:               float
+    price_low:               float
+    price_high:              float
     price_str:               str
     log_price:               float
     model:                   str
