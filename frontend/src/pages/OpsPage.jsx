@@ -4,7 +4,7 @@ import { usePolling } from '../hooks/usePolling'
 
 export default function OpsPage() {
   const health   = usePolling('/api/health', 5000)
-  const metrics  = usePolling('/api/metrics', 5000)
+  const metrics  = usePolling('/api/metrics/summary', 5000)
   const dlq      = usePolling('/api/dlq?n=20', 10000)
   const tdStats  = usePolling('/api/training-data/stats', 10000)
   const modelReg = usePolling('/api/model-info', null)   // fetch once; user refreshes manually
