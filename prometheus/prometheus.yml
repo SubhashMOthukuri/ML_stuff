@@ -15,6 +15,12 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
+  # Pushgateway — nightly retrain model-health gauges (r2, mae, rows, etc.)
+  - job_name: pushgateway
+    honor_labels: true          # preserve job/instance labels pushed by retrain.py
+    static_configs:
+      - targets: ['pushgateway:9091']
+
   # Fluent Bit metrics (optional — exposes its own prom metrics on :2020)
   - job_name: fluent-bit
     static_configs:

@@ -144,6 +144,20 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── Prometheus Pushgateway — retrain job metrics ────────────────────────────
+  pushgateway:
+    image: prom/pushgateway:v1.8.0
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9091/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
   # ── Prometheus — metrics store ──────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:v2.51.0

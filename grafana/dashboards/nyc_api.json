@@ -4,55 +4,95 @@
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "timezone": "browser",
-  "tags": ["nyc-api", "ml", "production"],
+  "tags": [
+    "nyc-api",
+    "ml",
+    "production"
+  ],
   "panels": [
-
     {
       "id": 1,
       "title": "Request Rate (req/s)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
-      "targets": [{
-        "expr": "sum(rate(http_requests_total{job=\"nyc-api\"}[5m]))",
-        "legendFormat": "req/s"
-      }],
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"nyc-api\"}[5m]))",
+          "legendFormat": "req/s"
+        }
+      ],
       "fieldConfig": {
-        "defaults": { "unit": "reqps", "color": { "mode": "palette-classic" } }
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
       }
     },
-
     {
       "id": 2,
       "title": "Error Rate (5xx/s)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
-      "targets": [{
-        "expr": "sum(rate(http_requests_total{job=\"nyc-api\",status_code=~\"5..\"}[5m]))",
-        "legendFormat": "errors/s"
-      }],
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"nyc-api\",status_code=~\"5..\"}[5m]))",
+          "legendFormat": "errors/s"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "color": { "fixedColor": "red", "mode": "fixed" },
+          "color": {
+            "fixedColor": "red",
+            "mode": "fixed"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.1 },
-              { "color": "red", "value": 1 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
             ]
           }
         }
       }
     },
-
     {
       "id": 3,
       "title": "Latency p50 / p95 / p99 (ms)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=\"nyc-api\",handler=\"/predict\"}[5m])) by (le)) * 1000",
@@ -68,58 +108,95 @@
         }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "ms" }
+        "defaults": {
+          "unit": "ms"
+        }
       }
     },
-
     {
       "id": 4,
       "title": "Predictions / sec by Arm",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
-      "targets": [{
-        "expr": "sum by (arm) (rate(nyc_predictions_total[5m]))",
-        "legendFormat": "{{arm}}"
-      }],
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (arm) (rate(nyc_predictions_total[5m]))",
+          "legendFormat": "{{arm}}"
+        }
+      ],
       "fieldConfig": {
-        "defaults": { "unit": "reqps" }
+        "defaults": {
+          "unit": "reqps"
+        }
       }
     },
-
     {
       "id": 5,
       "title": "Cache Hit Rate",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 4, "x": 8, "y": 8 },
-      "targets": [{
-        "expr": "sum(rate(nyc_predictions_total{cache_hit=\"true\"}[5m])) / sum(rate(nyc_predictions_total[5m]))",
-        "legendFormat": "hit rate"
-      }],
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 8,
+        "y": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(nyc_predictions_total{cache_hit=\"true\"}[5m])) / sum(rate(nyc_predictions_total[5m]))",
+          "legendFormat": "hit rate"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red",    "value": null },
-              { "color": "yellow", "value": 0.2 },
-              { "color": "green",  "value": 0.4 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.2
+              },
+              {
+                "color": "green",
+                "value": 0.4
+              }
             ]
           }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
-
     {
       "id": 6,
       "title": "Canary Traffic %",
       "type": "gauge",
-      "gridPos": { "h": 8, "w": 4, "x": 12, "y": 8 },
-      "targets": [{
-        "expr": "nyc_canary_traffic_pct",
-        "legendFormat": "canary %"
-      }],
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "expr": "nyc_canary_traffic_pct",
+          "legendFormat": "canary %"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
@@ -128,21 +205,40 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green",  "value": null },
-              { "color": "yellow", "value": 25 },
-              { "color": "orange", "value": 75 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 25
+              },
+              {
+                "color": "orange",
+                "value": 75
+              }
             ]
           }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
-
     {
       "id": 7,
       "title": "Predicted Price Distribution (USD)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum(rate(nyc_prediction_price_usd_bucket[5m])) by (le))",
@@ -154,73 +250,464 @@
         }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "currencyUSD" }
+        "defaults": {
+          "unit": "currencyUSD"
+        }
       }
     },
-
     {
       "id": 8,
       "title": "Active (Unacknowledged) Alerts",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 16 },
-      "targets": [{
-        "expr": "sum(nyc_active_alerts)",
-        "legendFormat": "alerts"
-      }],
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum(nyc_active_alerts)",
+          "legendFormat": "alerts"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green",  "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red",    "value": 5 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
             ]
           }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      }
     },
-
     {
       "id": 9,
       "title": "DLQ Depth",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 16 },
-      "targets": [{
-        "expr": "nyc_dlq_size",
-        "legendFormat": "DLQ"
-      }],
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "nyc_dlq_size",
+          "legendFormat": "DLQ"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green",  "value": null },
-              { "color": "yellow", "value": 100 },
-              { "color": "red",    "value": 1000 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
             ]
           }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      }
     },
-
     {
       "id": 10,
       "title": "HTTP Status Breakdown",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 16 },
-      "targets": [{
-        "expr": "sum by (status_code) (rate(http_requests_total{job=\"nyc-api\"}[5m]))",
-        "legendFormat": "HTTP {{status_code}}"
-      }],
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum by (status_code) (rate(http_requests_total{job=\"nyc-api\"}[5m]))",
+          "legendFormat": "HTTP {{status_code}}"
+        }
+      ],
       "fieldConfig": {
-        "defaults": { "unit": "reqps" }
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Model Health",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "collapsed": false
+    },
+    {
+      "id": 12,
+      "title": "Champion R\u00b2",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 27
+      },
+      "targets": [
+        {
+          "expr": "nyc_model_r2",
+          "legendFormat": "R\u00b2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 4,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.75
+              },
+              {
+                "color": "green",
+                "value": 0.82
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Champion MAE (USD)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 27
+      },
+      "targets": [
+        {
+          "expr": "nyc_model_mae_dollar",
+          "legendFormat": "MAE $"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 65
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Champion Version",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 27
+      },
+      "targets": [
+        {
+          "expr": "nyc_model_champion_version",
+          "legendFormat": "version"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 15,
+      "title": "Train Rows",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 27
+      },
+      "targets": [
+        {
+          "expr": "nyc_model_train_rows",
+          "legendFormat": "rows"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10000
+              },
+              {
+                "color": "green",
+                "value": 15000
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "Raw Null Price %",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 27
+      },
+      "targets": [
+        {
+          "expr": "nyc_model_null_price_pct",
+          "legendFormat": "null %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 17,
+      "title": "Training Price Median",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 27
+      },
+      "targets": [
+        {
+          "expr": "nyc_model_price_median",
+          "legendFormat": "median $"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 18,
+      "title": "R\u00b2 History (per retrain)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
+      "targets": [
+        {
+          "expr": "nyc_model_r2",
+          "legendFormat": "R\u00b2"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        }
+      }
+    },
+    {
+      "id": 19,
+      "title": "MAE History (per retrain)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "targets": [
+        {
+          "expr": "nyc_model_mae_dollar",
+          "legendFormat": "MAE $"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        }
       }
     }
-
   ]
 }
