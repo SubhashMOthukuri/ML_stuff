@@ -322,6 +322,61 @@ def clean_and_engineer(raw_path: Path) -> pd.DataFrame:
     return df
 
 
+# ── data provenance ───────────────────────────────────────────────────────────
+
+def _sha256(path: Path, chunk: int = 1 << 20) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _s3_version_id(s3_key: str) -> str:
+    """Return the S3 VersionId of the object, or 'unknown' if versioning is off."""
+    try:
+        import boto3
+        resp = boto3.client("s3").head_object(Bucket=S3_TRAINING_BUCKET, Key=s3_key)
+        return resp.get("VersionId", "unversioned")
+    except Exception:
+        return "unknown"
+
+
+def _data_provenance(
+    raw_path: Path | None,
+    df_raw_rows: int,
+    df_clean_rows: int,
+    df_train_rows: int,
+    null_price_pct: float,
+    price_median: float,
+    price_p10: float,
+    price_p90: float,
+    s3_key: str | None = None,
+) -> dict:
+    """
+    Build a data-provenance dict that gets logged to MLflow as params + metrics.
+    Captures: file identity (hash + S3 version), row counts at each pipeline
+    stage, and price distribution of the training set.
+    """
+    prov: dict = {
+        "data_s3_key":       s3_key or "local",
+        "data_rows_raw":     df_raw_rows,
+        "data_rows_clean":   df_clean_rows,
+        "data_rows_train":   df_train_rows,
+        "data_null_price_pct": round(null_price_pct * 100, 1),
+        "data_price_median": round(price_median, 2),
+        "data_price_p10":    round(price_p10, 2),
+        "data_price_p90":    round(price_p90, 2),
+    }
+    if raw_path is not None:
+        prov["data_sha256"]    = _sha256(raw_path)
+        prov["data_file_mb"]   = round(raw_path.stat().st_size / 1e6, 1)
+    if s3_key is not None:
+        prov["data_s3_version"] = _s3_version_id(s3_key)
+    return prov
+
+
 # ── null-price fallback ────────────────────────────────────────────────────────
 
 def _probe_null_price_pct(raw_path: Path) -> float:
@@ -385,9 +440,9 @@ def load_training_data(
     no_download: bool = False,
     s3_snapshot: bool = False,
     s3_index: int | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict]:
     """
-    Load the training dataset.
+    Load the training dataset.  Returns (df, provenance_dict).
 
     no_download=True  : use existing engineered_features.csv on disk (fastest, no network)
     s3_snapshot=True  : download one of 3 pre-uploaded InsideAirbnb CSVs from S3
@@ -396,16 +451,28 @@ def load_training_data(
 
     In all cases, the top 1% of prices is capped to match the original training setup.
     """
+    raw_path: Path | None = None
+    s3_key:   str  | None = None
+    rows_raw               = 0
+
     if no_download:
         path = DATA_DIR / "engineered_features.csv"
         logger.info("--no-download: using existing %s", path)
         df = pd.read_csv(path)
     elif s3_snapshot:
+        if s3_index is None:
+            s3_index = date.today().toordinal() % S3_SNAPSHOT_COUNT
+        s3_key   = f"{S3_TRAINING_PREFIX}/listings_{s3_index}.csv"
         raw_path = download_s3_snapshot(index=s3_index)
-        df = clean_and_engineer(raw_path)
+        rows_raw = sum(1 for _ in open(raw_path)) - 1  # fast line count
+        df       = clean_and_engineer(raw_path)
     else:
         raw_path = download_fresh_data()
-        df = _with_null_price_fallback(raw_path)
+        rows_raw = sum(1 for _ in open(raw_path)) - 1
+        df       = _with_null_price_fallback(raw_path)
+
+    rows_clean = len(df)
+    null_pct   = _probe_null_price_pct(raw_path) if raw_path else 0.0
 
     cap = df["price"].quantile(PRICE_CAP)
     df  = df[df["price"] <= cap].copy()
@@ -414,7 +481,26 @@ def load_training_data(
     # Gate 3: validate engineered features before training
     validate_engineered_features(df).raise_if_failed()
 
-    return df
+    prov = _data_provenance(
+        raw_path      = raw_path,
+        df_raw_rows   = rows_raw,
+        df_clean_rows = rows_clean,
+        df_train_rows = len(df),
+        null_price_pct= null_pct,
+        price_median  = float(df["price"].median()),
+        price_p10     = float(df["price"].quantile(0.10)),
+        price_p90     = float(df["price"].quantile(0.90)),
+        s3_key        = s3_key,
+    )
+    logger.info(
+        "Data provenance: %d raw → %d clean → %d train rows | "
+        "null_price=%.1f%% | price median=$%.0f (p10=$%.0f p90=$%.0f) | sha256=%s",
+        prov["data_rows_raw"], prov["data_rows_clean"], prov["data_rows_train"],
+        prov["data_null_price_pct"],
+        prov["data_price_median"], prov["data_price_p10"], prov["data_price_p90"],
+        prov.get("data_sha256", "n/a")[:12],
+    )
+    return df, prov
 
 
 def add_neighbourhood_target_encoding(
@@ -578,6 +664,7 @@ def register_with_mlflow(
     n_samples: int = 0,
     data_date: str = "",
     tuned_params: dict | None = None,
+    data_prov: dict | None = None,
 ) -> int:
     mlflow.set_tracking_uri(MLFLOW_URI)
     if MLFLOW_ARTIFACT_ROOT:
@@ -591,6 +678,7 @@ def register_with_mlflow(
                 artifact_location=MLFLOW_ARTIFACT_ROOT,
             )
     mlflow.set_experiment("nyc-airbnb-retraining")
+    data_prov = data_prov or {}
 
     onnx_path = (
         MODEL_DIR / "nyc_xgb_model.onnx" if stage == "Production"
@@ -610,16 +698,29 @@ def register_with_mlflow(
             "optuna_skipped":     str(not bool(tuned_params)),
         })
 
+        # ── data provenance (which file, which S3 version, how clean) ─────────
+        str_prov = {k: str(v) for k, v in data_prov.items()}
+        mlflow.log_params(str_prov)
+        # numeric stats also as metrics so they're queryable / plottable
+        for key in ("data_rows_raw", "data_rows_clean", "data_rows_train",
+                    "data_null_price_pct", "data_price_median",
+                    "data_price_p10", "data_price_p90"):
+            if key in data_prov:
+                mlflow.log_metric(key, float(data_prov[key]))
+
         # ── metrics ───────────────────────────────────────────────────────────
         mlflow.log_metrics(metrics)
         mlflow.log_metric("gate_passed", 1 if stage == "Production" else 0)
 
         # ── tags for easy filtering in the UI ─────────────────────────────────
         mlflow.set_tags({
-            "git_sha":    _git_sha(),
-            "pipeline":   "nightly-retrain",
-            "stage":      stage,
-            "data_date":  data_date or str(date.today()),
+            "git_sha":          _git_sha(),
+            "pipeline":         "nightly-retrain",
+            "stage":            stage,
+            "data_date":        data_date or str(date.today()),
+            "data_s3_key":      data_prov.get("data_s3_key", "local"),
+            "data_s3_version":  data_prov.get("data_s3_version", "n/a"),
+            "data_sha256":      data_prov.get("data_sha256", "n/a")[:16],
         })
 
         # ── artifacts ─────────────────────────────────────────────────────────
@@ -653,6 +754,26 @@ def register_with_mlflow(
             pass
         client.set_registered_model_alias(MODEL_NAME, "champion", version)
         logger.info("Promoted v%s to Production (alias: champion)  run_id=%s", version, run_id)
+
+        # Save baseline so the NEXT run can compare price distribution drift
+        baseline_path = MODEL_DIR / "baseline_stats.json"
+        existing = json.loads(baseline_path.read_text()) if baseline_path.exists() else {}
+        existing.update({
+            "data_price_median": data_prov.get("data_price_median"),
+            "data_price_p10":    data_prov.get("data_price_p10"),
+            "data_price_p90":    data_prov.get("data_price_p90"),
+            "data_rows_train":   data_prov.get("data_rows_train"),
+            "data_null_price_pct": data_prov.get("data_null_price_pct"),
+            "data_s3_key":       data_prov.get("data_s3_key"),
+            "data_s3_version":   data_prov.get("data_s3_version"),
+            "data_sha256":       data_prov.get("data_sha256"),
+            "champion_r2":       metrics.get("r2"),
+            "champion_mae":      metrics.get("mae_dollar"),
+            "champion_version":  int(version),
+            "champion_run_id":   run_id,
+        })
+        baseline_path.write_text(json.dumps(existing, indent=2))
+        logger.info("Baseline updated → %s", baseline_path)
     else:
         try:
             client.delete_registered_model_alias(MODEL_NAME, "challenger")
@@ -704,7 +825,7 @@ def main(
     # Load data, then split BEFORE target-encoding neighbourhood —
     # same random_state/test_size as the split below reproduces identical
     # train row IDs, so the encoding never sees test-set prices.
-    df = load_training_data(no_download=no_download, s3_snapshot=s3_snapshot, s3_index=s3_index)
+    df, data_prov = load_training_data(no_download=no_download, s3_snapshot=s3_snapshot, s3_index=s3_index)
     train_idx, _ = train_test_split(df.index, test_size=TEST_SIZE, random_state=RANDOM_SEED)
     df, neighbourhood_means_artefact = add_neighbourhood_target_encoding(df, train_idx)
 
@@ -760,7 +881,7 @@ def main(
         version = register_with_mlflow(
             model, metrics, feature_list, scaler,
             stage="Production", n_samples=n_samples, data_date=data_date,
-            tuned_params=tuned_params,
+            tuned_params=tuned_params, data_prov=data_prov,
         )
 
         # Update baseline metrics so the next gate is relative to this run
@@ -778,7 +899,7 @@ def main(
         version = register_with_mlflow(
             model, metrics, feature_list, scaler,
             stage="Staging", n_samples=n_samples, data_date=data_date,
-            tuned_params=tuned_params,
+            tuned_params=tuned_params, data_prov=data_prov,
         )
         logger.warning("Registered as Staging version %d — champion unchanged", version)
 
