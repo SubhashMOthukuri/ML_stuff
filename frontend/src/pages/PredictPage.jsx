@@ -6,7 +6,7 @@ const BATH_BY_ROOM_TYPE = {
   'Entire home/apt': true,
   'Hotel room':      true,
   'Shared room':     false,
-  'Private room':    null,
+  'Private room':    false,
 }
 
 const BOROUGH_COORDS = {
@@ -32,7 +32,6 @@ const DEFAULT_FORM = {
   reviews_per_month:    1.2,
   review_scores_rating: 4.7,
   amenity_count:        25,
-  listing_id:           '',
   has_gym:              false,
   has_elevator:         false,
   has_dryer:            true,
@@ -50,12 +49,11 @@ export default function PredictPage() {
   async function handleSubmit() {
     setLoading(true)
     setError(null)
-    const coords  = BOROUGH_COORDS[form.borough] ?? [40.7128, -74.006]
+    const coords      = BOROUGH_COORDS[form.borough] ?? [40.7128, -74.006]
     const impliedBath = BATH_BY_ROOM_TYPE[form.room_type]
     const payload = {
       ...form,
       is_private_bath:             impliedBath !== null ? impliedBath : form.is_private_bath,
-      listing_id:                  form.listing_id || undefined,
       latitude:                    coords[0],
       longitude:                   coords[1],
       number_of_reviews_ltm:       Math.min(form.number_of_reviews, 12),
@@ -76,41 +74,39 @@ export default function PredictPage() {
         setResult(await res.json())
       } else {
         const body = await res.json().catch(() => ({}))
-        setError(body.detail ?? `API error ${res.status}`)
+        setError(body.detail ?? `Error ${res.status} — please try again`)
       }
     } catch {
-      setError('Cannot reach API — make sure it is running on port 8001')
+      setError('Cannot reach the API. Please try again in a moment.')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="space-y-2">
-      <div className="mb-6">
-        <h1 className="text-white text-xl font-bold tracking-tight">Price Prediction</h1>
-        <p className="text-white/35 text-sm mt-1">
-          ONNX Runtime inference · Redis cache · request logging
+    <div>
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Price My Listing</h1>
+        <p className="text-slate-500 mt-1 text-sm">
+          Estimate what your NYC Airbnb could earn per night, based on 20,000+ real listings.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_400px] gap-8 items-start">
-        <div className="space-y-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-8 items-start">
+        <div>
           <ListingForm form={form} onChange={setForm} onSubmit={handleSubmit} loading={loading} />
           {error && (
-            <div className="rounded-xl border border-red-500/25 bg-red-500/8 px-4 py-3
-                            text-red-300 text-sm">
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-600 text-sm">
               {error}
             </div>
           )}
         </div>
 
-        <div className="space-y-4 xl:sticky xl:top-6">
-          {result ? (
-            <PredictionResult result={result} form={form} />
-          ) : (
-            <EmptyResult />
-          )}
+        <div className="xl:sticky xl:top-24">
+          {result
+            ? <PredictionResult result={result} form={form} />
+            : <EmptyResult />
+          }
         </div>
       </div>
     </div>
@@ -119,18 +115,17 @@ export default function PredictPage() {
 
 function EmptyResult() {
   return (
-    <div className="rounded-2xl border border-white/8 bg-white/[0.015] p-10 text-center">
-      <div className="w-14 h-14 rounded-2xl bg-rose-600/10 border border-rose-500/15
-                      flex items-center justify-center mx-auto mb-4">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-rose-400">
-          <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"
-                stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M9 22V12h6v10"
-                stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+    <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+      <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-4">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" className="text-slate-400">
+          <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2z"
+                stroke="currentColor" strokeWidth="1.5"/>
+          <path d="M12 8v4m0 4h.01" stroke="currentColor" strokeWidth="1.5"
+                strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
       </div>
-      <p className="text-white/55 text-sm font-medium">Your prediction appears here</p>
-      <p className="text-white/22 text-xs mt-1.5">Fill in the form and click Predict</p>
+      <p className="text-slate-600 text-sm font-medium">Your estimate appears here</p>
+      <p className="text-slate-400 text-xs mt-1">Fill in your listing details and click Estimate</p>
     </div>
   )
 }
