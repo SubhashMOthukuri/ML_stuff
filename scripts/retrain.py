@@ -322,6 +322,63 @@ def clean_and_engineer(raw_path: Path) -> pd.DataFrame:
     return df
 
 
+# ── null-price fallback ────────────────────────────────────────────────────────
+
+def _probe_null_price_pct(raw_path: Path) -> float:
+    """Read only the price column (first 2000 rows) and return the null fraction."""
+    try:
+        probe = pd.read_csv(raw_path, usecols=["price"], nrows=2000)
+        return float(probe["price"].isna().mean())
+    except Exception:
+        return 1.0  # assume broken if we can't read it
+
+
+def _with_null_price_fallback(raw_path: Path) -> pd.DataFrame:
+    """
+    Try to process raw_path.  If the price column is >95% null (InsideAirbnb
+    format change — seen in Dec 2025 snapshot where prices were fully removed)
+    fall back in order:
+      1. S3 pre-uploaded snapshots (listings_0/1/2.csv)
+      2. Existing engineered_features.csv on disk
+    Normal snapshots have 40-70% null prices (draft/unlisted properties); those
+    are handled naturally by clean_and_engineer which drops null-price rows.
+    """
+    null_pct = _probe_null_price_pct(raw_path)
+    if null_pct <= 0.95:
+        return clean_and_engineer(raw_path)
+
+    logger.warning(
+        "Downloaded snapshot has %.0f%% null prices — InsideAirbnb format change detected. "
+        "Prices are no longer included in listings.csv for this snapshot.",
+        null_pct * 100,
+    )
+
+    # Fallback 1: S3 pre-uploaded snapshots
+    try:
+        logger.info("Falling back to S3 snapshot rotation...")
+        s3_path = download_s3_snapshot()
+        logger.info("Using S3 snapshot: %s", s3_path)
+        return clean_and_engineer(s3_path)
+    except Exception as exc:
+        logger.warning("S3 fallback failed: %s", exc)
+
+    # Fallback 2: existing engineered_features.csv
+    eng_path = DATA_DIR / "engineered_features.csv"
+    if eng_path.exists():
+        logger.warning(
+            "No usable snapshot available. Retraining on existing %s "
+            "(no new data — model stays current but won't reflect market changes).",
+            eng_path,
+        )
+        return pd.read_csv(eng_path)
+
+    raise RuntimeError(
+        "Downloaded snapshot has null prices, S3 fallback failed, and no "
+        "engineered_features.csv exists on disk. Cannot retrain.\n"
+        "Fix: upload snapshots to S3 or run with --no-download."
+    )
+
+
 # ── training data loader ───────────────────────────────────────────────────────
 
 def load_training_data(
@@ -348,7 +405,7 @@ def load_training_data(
         df = clean_and_engineer(raw_path)
     else:
         raw_path = download_fresh_data()
-        df = clean_and_engineer(raw_path)
+        df = _with_null_price_fallback(raw_path)
 
     cap = df["price"].quantile(PRICE_CAP)
     df  = df[df["price"] <= cap].copy()
