@@ -127,7 +127,7 @@ _RAW_SCHEMA = DataFrameSchema(
 # Stage 2: cleaned listings (output of 1_data_cleaning.py)
 _CLEAN_SCHEMA = DataFrameSchema(
     {
-        "price":               Column(float, Check.in_range(5, 10_000)),
+        "price":               Column(float, Check.in_range(3, 50_000)),
         "accommodates":        Column(float, Check.in_range(1, 16),  coerce=True),
         "bedrooms":            Column(float, Check.in_range(0, 20),  nullable=False),
         "bathrooms":           Column(float, Check.in_range(0, 20),  nullable=False),

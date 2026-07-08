@@ -162,9 +162,9 @@ def handle_missing_values(df):
         df['reviews_per_month'] = df['reviews_per_month'].fillna(0)
         logger.info(f"   ✓ reviews_per_month: filled nulls with 0")
 
-    if 'host_listings_count' in df.columns and df['host_listings_count'].isnull().sum() > 0:
-        df['host_listings_count'] = df['host_listings_count'].fillna(1)
-        logger.info(f"   ✓ host_listings_count: filled nulls with 1")
+    if 'host_listings_count' in df.columns:
+        df['host_listings_count'] = df['host_listings_count'].fillna(1).clip(lower=1)
+        logger.info(f"   ✓ host_listings_count: filled nulls with 1, clipped zeros to 1")
 
     review_score_cols = [
         'review_scores_rating', 'review_scores_accuracy', 'review_scores_cleanliness',
@@ -180,6 +180,14 @@ def handle_missing_values(df):
     df = df.dropna()
     dropped = rows_before - len(df)
     logger.info(f"   Dropped {dropped:,} rows with remaining nulls → {len(df):,} rows remaining")
+
+    # Drop junk-price listings (< $3/night are placeholder/test listings)
+    if "price" in df.columns:
+        price_floor_mask = df["price"] >= 3
+        n_dropped = (~price_floor_mask).sum()
+        if n_dropped > 0:
+            df = df[price_floor_mask].copy()
+            logger.info(f"   Dropped {n_dropped} listings with price < $3/night")
 
     return df
 
