@@ -22,10 +22,10 @@ const DEFAULT_FORM = {
 }
 
 export default function PredictPage() {
-  const [form, setForm]       = useState(DEFAULT_FORM)
-  const [result, setResult]   = useState(null)
+  const [form, setForm]     = useState(DEFAULT_FORM)
+  const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError]     = useState(null)
+  const [error, setError]   = useState(null)
 
   async function handleSubmit() {
     setLoading(true)
@@ -33,16 +33,14 @@ export default function PredictPage() {
     const coords = BOROUGH_COORDS[form.borough] ?? [40.7128, -74.006]
     const beds   = Math.max(form.bedrooms, 1)
     const payload = {
-      // user-supplied
-      room_type:            form.room_type,
-      borough:              form.borough,
-      neighbourhood:        form.neighbourhood || undefined,
-      bedrooms:             form.bedrooms,
-      bathrooms:            form.bathrooms,
-      minimum_nights:       form.minimum_nights,
-      review_scores_rating: form.review_scores_rating,
-      number_of_reviews:    form.number_of_reviews,
-      // auto-derived — not shown to user
+      room_type:                   form.room_type,
+      borough:                     form.borough,
+      neighbourhood:               form.neighbourhood || undefined,
+      bedrooms:                    form.bedrooms,
+      bathrooms:                   form.bathrooms,
+      minimum_nights:              form.minimum_nights,
+      review_scores_rating:        form.review_scores_rating,
+      number_of_reviews:           form.number_of_reviews,
       accommodates:                beds * 2,
       is_private_bath:             form.room_type === 'Entire home/apt',
       latitude:                    coords[0],
@@ -73,6 +71,9 @@ export default function PredictPage() {
       })
       if (res.ok) {
         setResult(await res.json())
+        setTimeout(() => {
+          document.getElementById('result-anchor')?.scrollIntoView({ behavior: 'smooth' })
+        }, 100)
       } else {
         const body = await res.json().catch(() => ({}))
         setError(body.detail ?? `Error ${res.status} — please try again`)
@@ -85,48 +86,27 @@ export default function PredictPage() {
   }
 
   return (
-    <div>
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Price My Listing</h1>
-        <p className="text-slate-500 mt-1 text-sm">
-          Estimate what your NYC Airbnb could earn per night, based on 20,000+ real listings.
+    <div className="space-y-3">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold text-slate-900">Price My Listing</h1>
+        <p className="text-slate-500 text-sm mt-1">
+          Estimate what your NYC Airbnb could earn per night.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-8 items-start">
-        <div>
-          <ListingForm form={form} onChange={setForm} onSubmit={handleSubmit} loading={loading} />
-          {error && (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-600 text-sm">
-              {error}
-            </div>
-          )}
-        </div>
+      <ListingForm form={form} onChange={setForm} onSubmit={handleSubmit} loading={loading} />
 
-        <div className="xl:sticky xl:top-24">
-          {result
-            ? <PredictionResult result={result} form={form} />
-            : <EmptyResult />
-          }
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-600 text-sm">
+          {error}
         </div>
-      </div>
-    </div>
-  )
-}
+      )}
 
-function EmptyResult() {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
-      <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-4">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" className="text-slate-400">
-          <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2z"
-                stroke="currentColor" strokeWidth="1.5"/>
-          <path d="M12 8v4m0 4h.01" stroke="currentColor" strokeWidth="1.5"
-                strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </div>
-      <p className="text-slate-600 text-sm font-medium">Your estimate appears here</p>
-      <p className="text-slate-400 text-xs mt-1">Fill in your listing details and click Estimate</p>
+      {result && (
+        <div id="result-anchor">
+          <PredictionResult result={result} form={form} />
+        </div>
+      )}
     </div>
   )
 }

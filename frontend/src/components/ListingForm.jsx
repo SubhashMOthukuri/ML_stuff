@@ -87,7 +87,7 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
       <div className="px-6 py-5 space-y-4">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Location</p>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <Label>Borough</Label>
             <Select
@@ -109,7 +109,7 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
 
         <div>
           <Label>Property type</Label>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {ROOM_TYPES.map(type => (
               <button
                 key={type}
@@ -131,7 +131,7 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
       <div className="px-6 py-5 space-y-5">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Property details</p>
 
-        <div className="grid grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
           <div>
             <Label>Bedrooms</Label>
             <Slider
@@ -163,7 +163,7 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
       <div className="px-6 py-5 space-y-5">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Reviews</p>
 
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           <div>
             <Label>Overall rating</Label>
             <Slider
