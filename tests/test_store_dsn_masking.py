@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 
 from src.new_york_workflow.nyc_store import RequestStore
 
-PG_DSN = "postgresql://nyc_app:Rama1998@nyc-rds.abc.us-east-2.rds.amazonaws.com:5432/nyc"
+PG_DSN = "postgresql://nyc_app:test-secret-pw@nyc-rds.abc.us-east-2.rds.amazonaws.com:5432/nyc"
+_TEST_PW = "test-secret-pw"
 
 
 def _mock_pg_store() -> RequestStore:
@@ -27,7 +28,7 @@ def _mock_pg_store() -> RequestStore:
 def test_safe_label_masks_postgres_password():
     store = _mock_pg_store()
     assert store.safe_label == "postgres"
-    assert "Rama1998" not in store.safe_label
+    assert _TEST_PW not in store.safe_label
 
 
 def test_safe_label_passes_through_sqlite_path(tmp_path):
@@ -39,5 +40,5 @@ def test_safe_label_passes_through_sqlite_path(tmp_path):
 def test_startup_log_never_contains_password(caplog):
     with caplog.at_level("INFO"):
         _mock_pg_store()
-    leaked = [r.message for r in caplog.records if "Rama1998" in r.getMessage()]
+    leaked = [r.message for r in caplog.records if _TEST_PW in r.getMessage()]
     assert leaked == [], f"password leaked in log records: {leaked}"
