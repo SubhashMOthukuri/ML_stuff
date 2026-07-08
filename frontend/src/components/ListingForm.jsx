@@ -149,7 +149,7 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
             />
           </div>
           <div>
-            <Label>Min. stay</Label>
+            <Label hint="affects listing type, not total price">Min. nights required</Label>
             <Slider
               value={form.minimum_nights} onChange={v => set('minimum_nights', v)}
               min={1} max={30}

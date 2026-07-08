@@ -27,14 +27,24 @@ export default function PredictionResult({ result, form }) {
       {/* price header */}
       <div className="bg-emerald-600 px-6 py-6">
         <p className="text-emerald-100 text-xs font-semibold uppercase tracking-wider mb-1">
-          Estimated nightly price
+          Estimated nightly rate
         </p>
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-2 mb-3">
           <span className="text-5xl font-black text-white leading-none">
             ${Math.round(price_usd)}
           </span>
           <span className="text-emerald-200 text-lg font-medium mb-0.5">/night</span>
         </div>
+        {form.minimum_nights > 1 && (
+          <div className="bg-emerald-700/60 rounded-xl px-4 py-2.5 flex items-center justify-between">
+            <span className="text-emerald-100 text-sm">
+              Total for {form.minimum_nights} nights
+            </span>
+            <span className="text-white font-bold text-lg tabular-nums">
+              ${Math.round(price_usd * form.minimum_nights).toLocaleString()}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* range bar */}
