@@ -2,6 +2,13 @@ import { useState } from 'react'
 import ListingForm from '../components/ListingForm'
 import PredictionResult from '../components/PredictionResult'
 
+const BATH_BY_ROOM_TYPE = {
+  'Entire home/apt': true,
+  'Hotel room':      true,
+  'Shared room':     false,
+  'Private room':    null,
+}
+
 const BOROUGH_COORDS = {
   Manhattan:       [40.7831, -73.9712],
   Brooklyn:        [40.6782, -73.9442],
@@ -44,8 +51,10 @@ export default function PredictPage() {
     setLoading(true)
     setError(null)
     const coords  = BOROUGH_COORDS[form.borough] ?? [40.7128, -74.006]
+    const impliedBath = BATH_BY_ROOM_TYPE[form.room_type]
     const payload = {
       ...form,
+      is_private_bath:             impliedBath !== null ? impliedBath : form.is_private_bath,
       listing_id:                  form.listing_id || undefined,
       latitude:                    coords[0],
       longitude:                   coords[1],

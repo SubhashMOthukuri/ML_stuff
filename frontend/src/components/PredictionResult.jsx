@@ -78,7 +78,7 @@ export default function PredictionResult({ result, form }) {
           <Chip icon={Home}
             label="Type"
             value={form.room_type}
-            sub={form.is_private_bath ? 'Private bath' : 'Shared bath'} />
+            sub={`${form.bedrooms} bd · ${form.bathrooms} ba`} />
           <Chip icon={Users}
             label="Capacity"
             value={`${form.accommodates} guests`}

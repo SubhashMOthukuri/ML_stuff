@@ -55,7 +55,7 @@ secretName: nyc-airbnb-secrets
 frontend:
   image:
     repository: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend
-    tag: 9c94186
+    tag: 23ac8e6
 
 
 

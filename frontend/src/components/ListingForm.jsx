@@ -126,6 +126,13 @@ function Card({ icon: Icon, title, accent, children }) {
 
 // ─── main ─────────────────────────────────────────────────────────────────────
 
+const BATH_BY_ROOM_TYPE = {
+  'Entire home/apt': true,
+  'Hotel room':      true,
+  'Shared room':     false,
+  'Private room':    false,
+}
+
 export default function ListingForm({ form, onChange, onSubmit, loading }) {
   const [showHost, setShowHost] = useState(false)
   const neighbourhoods = BOROUGH_NEIGHBOURHOODS[form.borough] ?? []
@@ -139,7 +146,11 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
         <div className="grid grid-cols-2 gap-5">
           <div>
             <FieldLabel>Room type</FieldLabel>
-            <StyledSelect value={form.room_type} onChange={v => set('room_type', v)} options={ROOM_TYPES} />
+            <StyledSelect
+              value={form.room_type}
+              onChange={v => onChange({ ...form, room_type: v, is_private_bath: BATH_BY_ROOM_TYPE[v] })}
+              options={ROOM_TYPES}
+            />
           </div>
           <div>
             <FieldLabel>Borough</FieldLabel>
@@ -161,31 +172,6 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
           />
         </div>
 
-        <div>
-          <FieldLabel badge="#1 most important feature">Bathroom type</FieldLabel>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => set('is_private_bath', true)}
-              className={`flex-1 py-3 rounded-xl border text-sm font-medium transition-all
-                ${form.is_private_bath
-                  ? 'bg-rose-600/20 border-rose-500/50 text-rose-200'
-                  : 'bg-white/4 border-white/10 text-white/40 hover:border-white/20'}`}
-            >
-              Private bath
-            </button>
-            <button
-              type="button"
-              onClick={() => set('is_private_bath', false)}
-              className={`flex-1 py-3 rounded-xl border text-sm font-medium transition-all
-                ${!form.is_private_bath
-                  ? 'bg-white/12 border-white/25 text-white'
-                  : 'bg-white/4 border-white/10 text-white/40 hover:border-white/20'}`}
-            >
-              Shared bath
-            </button>
-          </div>
-        </div>
       </Card>
 
       {/* ── Capacity ── */}
@@ -215,7 +201,7 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
             <RangeSlider
               value={form.bathrooms}
               onChange={v => set('bathrooms', v)}
-              min={0.5} max={10} step={0.5}
+              min={1} max={10} step={0.5}
               formatValue={v => v === 1 ? '1 bath' : `${v} baths`}
             />
           </div>
