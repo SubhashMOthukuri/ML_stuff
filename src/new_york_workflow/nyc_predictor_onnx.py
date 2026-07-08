@@ -268,12 +268,9 @@ class NYCAirbnbPredictorONNX:
         Each successive rule applies to the already-adjusted price.
         """
         applied: list[str] = []
-        room_type      = raw.get("room_type", "")
-        accommodates   = int(raw.get("accommodates", 1))
-        bedrooms       = max(float(raw.get("bedrooms", 1)), 1.0)
-        n_reviews      = int(raw.get("number_of_reviews", 0))
-        rating         = float(raw.get("review_scores_rating", 0.0))
-        guests_per_bed = accommodates / bedrooms
+        room_type  = raw.get("room_type", "")
+        n_reviews  = int(raw.get("number_of_reviews", 0))
+        rating     = float(raw.get("review_scores_rating", 0.0))
 
         # ── 1. Shared room hard cap ───────────────────────────────────────────
         # NYC InsideAirbnb: shared room median $75, 95th pct $120.
@@ -282,21 +279,7 @@ class NYCAirbnbPredictorONNX:
             price_usd = 120.0
             applied.append("shared_room_cap_$120")
 
-        # ── 2. Overcrowding — non-linear value collapse ───────────────────────
-        # Value doesn't decay linearly when a listing becomes genuinely unlivable.
-        # > 5 guests/bed → backpacker floor (max of $85 or 35% of predicted).
-        # 3-5 guests/bed → seriously cramped → 35% discount.
-        # ≤ 3 guests/bed → normal NYC density, no penalty.
-        if guests_per_bed > 5:
-            # Hard ceiling — value collapses at this density regardless of model output.
-            # min() caps from above; never raises a price that's already below $85.
-            price_usd = min(price_usd, 85.0)
-            applied.append(f"severe_overcrowding_floor_{guests_per_bed:.1f}gpb")
-        elif guests_per_bed > 3:
-            price_usd *= 0.65
-            applied.append(f"overcrowding_penalty_35%_{guests_per_bed:.1f}gpb")
-
-        # ── 3. Rating penalties — 4-tier, reviewed listings only ─────────────
+        # ── 2. Rating penalties — 4-tier, reviewed listings only ─────────────
         # rating=0 means no reviews (new listing), not a terrible listing.
         # Tiers match how Airbnb search ranking and conversion rate actually behave:
         #   sub-4.0★ → risk signal; sub-3.0★ → near-unbookable without discount;

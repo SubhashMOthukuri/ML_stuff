@@ -2,13 +2,6 @@ import { useState } from 'react'
 import ListingForm from '../components/ListingForm'
 import PredictionResult from '../components/PredictionResult'
 
-const BATH_BY_ROOM_TYPE = {
-  'Entire home/apt': true,
-  'Hotel room':      true,
-  'Shared room':     false,
-  'Private room':    false,
-}
-
 const BOROUGH_COORDS = {
   Manhattan:       [40.7831, -73.9712],
   Brooklyn:        [40.6782, -73.9442],
@@ -18,26 +11,14 @@ const BOROUGH_COORDS = {
 }
 
 const DEFAULT_FORM = {
-  accommodates:         2,
+  room_type:            'Entire home/apt',
+  borough:              'Manhattan',
+  neighbourhood:        '',
   bedrooms:             1,
   bathrooms:            1.0,
-  is_private_bath:      true,
-  room_type:            'Entire home/apt',
-  borough:              'Brooklyn',
-  neighbourhood:        'Williamsburg',
   minimum_nights:       2,
-  host_is_superhost:    false,
-  host_listings_count:  1,
-  number_of_reviews:    30,
-  reviews_per_month:    1.2,
-  review_scores_rating: 4.7,
-  amenity_count:        25,
-  has_gym:              false,
-  has_elevator:         false,
-  has_dryer:            true,
-  has_air_conditioning: true,
-  has_washer:           true,
-  has_pool:             false,
+  review_scores_rating: 4.5,
+  number_of_reviews:    20,
 }
 
 export default function PredictPage() {
@@ -49,20 +30,40 @@ export default function PredictPage() {
   async function handleSubmit() {
     setLoading(true)
     setError(null)
-    const coords      = BOROUGH_COORDS[form.borough] ?? [40.7128, -74.006]
-    const impliedBath = BATH_BY_ROOM_TYPE[form.room_type]
+    const coords = BOROUGH_COORDS[form.borough] ?? [40.7128, -74.006]
+    const beds   = Math.max(form.bedrooms, 1)
     const payload = {
-      ...form,
-      is_private_bath:             impliedBath !== null ? impliedBath : form.is_private_bath,
+      // user-supplied
+      room_type:            form.room_type,
+      borough:              form.borough,
+      neighbourhood:        form.neighbourhood || undefined,
+      bedrooms:             form.bedrooms,
+      bathrooms:            form.bathrooms,
+      minimum_nights:       form.minimum_nights,
+      review_scores_rating: form.review_scores_rating,
+      number_of_reviews:    form.number_of_reviews,
+      // auto-derived — not shown to user
+      accommodates:                beds * 2,
+      is_private_bath:             form.room_type === 'Entire home/apt',
       latitude:                    coords[0],
       longitude:                   coords[1],
+      amenity_count:               30,
       number_of_reviews_ltm:       Math.min(form.number_of_reviews, 12),
+      reviews_per_month:           Math.max(form.number_of_reviews / 24, 0.1),
       review_scores_accuracy:      form.review_scores_rating,
       review_scores_cleanliness:   form.review_scores_rating,
       review_scores_checkin:       form.review_scores_rating,
       review_scores_communication: form.review_scores_rating,
       review_scores_location:      form.review_scores_rating,
       review_scores_value:         form.review_scores_rating,
+      host_is_superhost:           false,
+      host_listings_count:         1,
+      has_gym:                     false,
+      has_elevator:                false,
+      has_dryer:                   false,
+      has_air_conditioning:        false,
+      has_washer:                  false,
+      has_pool:                    false,
     }
     try {
       const res = await fetch('/api/predict', {
