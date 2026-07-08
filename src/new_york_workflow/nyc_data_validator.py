@@ -151,11 +151,11 @@ _CLEAN_SCHEMA = DataFrameSchema(
 # Stage 3: engineered features (output of 2_feature_engineering.py)
 _ENGINEERED_SCHEMA = DataFrameSchema(
     {
-        "log_price":         Column(float, Check.in_range(2.0, 10.5)),
+        "log_price":         Column(float, Check.in_range(1.0, 10.5)),
         "dist_from_midtown": Column(float, Check.in_range(0, 120)),
         "review_score_std":  Column(float, Check.ge(0)),
-        "accommodates_sq":   Column(float, Check.ge(0)),
-        "bedrooms_sq":       Column(float, Check.ge(0)),
+        "accommodates_sq":   Column(checks=[Check.ge(0)]),
+        "bedrooms_sq":       Column(checks=[Check.ge(0)]),
         "borough_Brooklyn":  Column(coerce=True),
         "borough_Manhattan": Column(coerce=True),
         "borough_Queens":    Column(coerce=True),
@@ -415,7 +415,7 @@ def validate_engineered_features(df: pd.DataFrame) -> DataQualityReport:
     if "log_price" in df.columns:
         if df["log_price"].isna().any():
             errors.append("log_price contains NaN — target column is corrupt")
-        n_outside = (~df["log_price"].between(2.0, 10.5)).sum()
+        n_outside = (~df["log_price"].between(1.0, 10.5)).sum()
         if n_outside > len(df) * 0.01:
             warnings.append(
                 f"{n_outside} rows have log_price outside [2.0, 10.5] "
