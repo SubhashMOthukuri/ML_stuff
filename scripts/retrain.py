@@ -464,11 +464,11 @@ def load_training_data(
             s3_index = date.today().toordinal() % S3_SNAPSHOT_COUNT
         s3_key   = f"{S3_TRAINING_PREFIX}/listings_{s3_index}.csv"
         raw_path = download_s3_snapshot(index=s3_index)
-        rows_raw = sum(1 for _ in open(raw_path)) - 1  # fast line count
+        rows_raw = pd.read_csv(raw_path, usecols=[0]).shape[0]  # accurate row count
         df       = clean_and_engineer(raw_path)
     else:
         raw_path = download_fresh_data()
-        rows_raw = sum(1 for _ in open(raw_path)) - 1
+        rows_raw = pd.read_csv(raw_path, usecols=[0]).shape[0]
         df       = _with_null_price_fallback(raw_path)
 
     rows_clean = len(df)
@@ -774,7 +774,7 @@ def register_with_mlflow(
         })
         baseline_path.write_text(json.dumps(existing, indent=2))
         logger.info("Baseline updated → %s", baseline_path)
-        _push_retrain_metrics(metrics, data_prov, int(version))
+        _push_retrain_metrics(metrics, data_prov, int(version), gate_passed=True)
     else:
         try:
             client.delete_registered_model_alias(MODEL_NAME, "challenger")
@@ -788,10 +788,15 @@ def register_with_mlflow(
 
 # ── Prometheus Pushgateway ─────────────────────────────────────────────────────
 
-def _push_retrain_metrics(metrics: dict, data_prov: dict, version: int) -> None:
+def _push_retrain_metrics(
+    metrics: dict, data_prov: dict, version: int, gate_passed: bool
+) -> None:
     """
     Push retrain outcome gauges to the Prometheus Pushgateway so Grafana can
     display a "Model Health" row without needing direct MLflow access.
+
+    Called on BOTH Production (gate_passed=True) and Staging (gate_passed=False)
+    so Grafana always shows the outcome of the most recent retrain attempt.
 
     Pushgateway URL is read from PUSHGATEWAY_URL env var
     (default: http://pushgateway:9091).  Silently skipped if not reachable —
@@ -799,34 +804,34 @@ def _push_retrain_metrics(metrics: dict, data_prov: dict, version: int) -> None:
     """
     pushgateway = os.getenv("PUSHGATEWAY_URL", "http://pushgateway:9091")
     try:
-        from prometheus_client import (
-            CollectorRegistry, Gauge, push_to_gateway,
-        )
+        from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
     except ImportError:
         logger.warning("prometheus_client not installed — skipping Pushgateway push")
         return
 
     reg = CollectorRegistry()
 
-    def g(name, desc, value, **labels):
-        gauge = Gauge(name, desc, list(labels.keys()), registry=reg)
-        gauge.labels(**labels).set(value)
+    # No extra labels on the metrics — the Pushgateway grouping key (job=nyc-retrain)
+    # already adds a job label when Prometheus scrapes. Adding our own job label too
+    # would conflict and produce duplicate/overridden labels.
+    def g(name, desc, value):
+        Gauge(name, desc, registry=reg).set(value)
 
-    g("nyc_model_r2",              "Champion model R²",              metrics.get("r2", 0),          job="retrain")
-    g("nyc_model_mae_dollar",      "Champion model MAE (USD)",       metrics.get("mae_dollar", 0),  job="retrain")
-    g("nyc_model_mape_pct",        "Champion model MAPE %",          metrics.get("mape_pct", 0),    job="retrain")
-    g("nyc_model_gate_passed",     "Validation gate (1=pass)",       1,                             job="retrain")
-    g("nyc_model_champion_version","MLflow champion version number", version,                       job="retrain")
-    g("nyc_model_train_rows",      "Training rows used",             data_prov.get("data_rows_train", 0),       job="retrain")
-    g("nyc_model_raw_rows",        "Raw snapshot rows before clean", data_prov.get("data_rows_raw", 0),         job="retrain")
-    g("nyc_model_null_price_pct",  "Null price % in raw snapshot",   data_prov.get("data_null_price_pct", 0),   job="retrain")
-    g("nyc_model_price_median",    "Training set price median (USD)",data_prov.get("data_price_median", 0),     job="retrain")
-    g("nyc_model_price_p10",       "Training set price p10 (USD)",   data_prov.get("data_price_p10", 0),        job="retrain")
-    g("nyc_model_price_p90",       "Training set price p90 (USD)",   data_prov.get("data_price_p90", 0),        job="retrain")
+    g("nyc_model_r2",               "Champion model R²",              metrics.get("r2", 0))
+    g("nyc_model_mae_dollar",        "Champion model MAE (USD)",       metrics.get("mae_dollar", 0))
+    g("nyc_model_mape_pct",          "Champion model MAPE %",          metrics.get("mape_pct", 0))
+    g("nyc_model_gate_passed",       "Validation gate (1=pass 0=fail)",int(gate_passed))
+    g("nyc_model_champion_version",  "MLflow champion version number", version)
+    g("nyc_model_train_rows",        "Training rows used",             data_prov.get("data_rows_train", 0))
+    g("nyc_model_raw_rows",          "Raw snapshot rows before clean", data_prov.get("data_rows_raw", 0))
+    g("nyc_model_null_price_pct",    "Null price % in raw snapshot",   data_prov.get("data_null_price_pct", 0))
+    g("nyc_model_price_median",      "Training set price median (USD)",data_prov.get("data_price_median", 0))
+    g("nyc_model_price_p10",         "Training set price p10 (USD)",   data_prov.get("data_price_p10", 0))
+    g("nyc_model_price_p90",         "Training set price p90 (USD)",   data_prov.get("data_price_p90", 0))
 
     try:
         push_to_gateway(pushgateway, job="nyc-retrain", registry=reg)
-        logger.info("Pushgateway metrics pushed → %s", pushgateway)
+        logger.info("Pushgateway metrics pushed → %s (gate_passed=%s)", pushgateway, gate_passed)
     except Exception as exc:
         logger.warning("Pushgateway push failed (non-fatal): %s", exc)
 
@@ -987,6 +992,7 @@ def main(
             )
         except Exception:
             pass
+        _push_retrain_metrics(metrics, data_prov, int(version), gate_passed=False)
         sys.exit(1)
 
 
