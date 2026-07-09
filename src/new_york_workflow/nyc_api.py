@@ -57,9 +57,9 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 
-from src.config import settings
-from src.logger_config import setup_logging
-from src.metrics import (
+from src.core.config import settings
+from src.core.logging import setup_logging
+from src.core.metrics import (
     metrics,
     prom_canary_traffic_pct,
     prom_active_alerts,
@@ -788,7 +788,7 @@ def predict(listing: ListingFeatures, request: Request,
         canary.record_post_promotion(_infer_ms, success=True)
 
         # Prometheus: record prediction with final arm (known only after routing)
-        from src.metrics import prom_predictions_total, prom_prediction_price_usd
+        from src.core.metrics import prom_predictions_total, prom_prediction_price_usd
         prom_predictions_total.labels(arm=routed_arm, cache_hit="false").inc()
         prom_prediction_price_usd.observe(result["price_usd"])
 

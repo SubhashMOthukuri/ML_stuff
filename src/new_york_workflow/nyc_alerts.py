@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import settings
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 

@@ -23,7 +23,7 @@ import logging
 
 import structlog
 
-from src.config import settings
+from src.core.config import settings
 
 _SERVICE = settings.dd_service
 _ENV     = settings.dd_env

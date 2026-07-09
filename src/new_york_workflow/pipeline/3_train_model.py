@@ -42,7 +42,7 @@ DATA_DIR  = BASE_DIR / "data" / "airbnb"
 MODEL_DIR = BASE_DIR / "models" / "nyc"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-from src.config import settings
+from src.core.config import settings
 MLFLOW_URI  = settings.mlflow_tracking_uri
 EXPERIMENT  = "nyc-airbnb-price-exploration"   # exploration runs (all 3 models)
 MODEL_NAME  = "nyc-airbnb-xgboost"             # registry name for the XGBoost champion

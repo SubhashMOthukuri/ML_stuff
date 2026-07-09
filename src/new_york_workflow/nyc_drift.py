@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from src.metrics import prom_psi_score, prom_drift_status
+from src.core.metrics import prom_psi_score, prom_drift_status
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class DriftReport:
 class DriftMonitor:
 
     def __init__(self, db_path: Path | None = None, baseline_path: Path = BASELINE):
-        from src.config import settings
+        from src.core.config import settings
         self._db   = Path(db_path or settings.prediction_db)
         self._base = self._load_baseline(baseline_path)
 

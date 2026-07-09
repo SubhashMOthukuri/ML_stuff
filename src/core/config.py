@@ -7,7 +7,7 @@ Why this exists:
   Now every module imports `settings` and reads from one place.
 
 Usage:
-  from src.config import settings
+  from src.core.config import settings
   host = settings.redis_host
 """
 

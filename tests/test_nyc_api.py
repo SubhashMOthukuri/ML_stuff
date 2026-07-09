@@ -884,7 +884,7 @@ class TestAPIKeyAuth:
 
     def test_auth_disabled_when_valid_api_keys_empty(self, valid_listing, monkeypatch):
         from src.new_york_workflow import nyc_api
-        from src.config import settings
+        from src.core.config import settings
         monkeypatch.setattr(settings, "valid_api_keys", "")
         from fastapi.testclient import TestClient as TC
         with TC(nyc_api.app) as c:
@@ -896,7 +896,7 @@ class TestSlackAlerts:
     def test_slack_not_called_when_no_webhook(self, tmp_path, monkeypatch):
         from unittest.mock import patch
         from src.new_york_workflow.nyc_alerts import AlertStore
-        from src.config import settings
+        from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "")
         with patch("requests.post") as mock_post:
@@ -906,7 +906,7 @@ class TestSlackAlerts:
     def test_slack_not_called_for_info_severity(self, tmp_path, monkeypatch):
         from unittest.mock import patch
         from src.new_york_workflow.nyc_alerts import AlertStore
-        from src.config import settings
+        from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
         with patch("requests.post") as mock_post:
@@ -916,7 +916,7 @@ class TestSlackAlerts:
     def test_slack_called_for_warning(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
         from src.new_york_workflow.nyc_alerts import AlertStore
-        from src.config import settings
+        from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
         mock_resp = MagicMock()
@@ -931,7 +931,7 @@ class TestSlackAlerts:
     def test_slack_called_for_critical(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
         from src.new_york_workflow.nyc_alerts import AlertStore
-        from src.config import settings
+        from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
         mock_resp = MagicMock()
@@ -946,7 +946,7 @@ class TestSlackAlerts:
     def test_slack_critical_channel_override(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
         from src.new_york_workflow.nyc_alerts import AlertStore
-        from src.config import settings
+        from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
         monkeypatch.setattr(settings, "slack_critical_channel", "#incidents")
@@ -960,7 +960,7 @@ class TestSlackAlerts:
     def test_slack_failure_does_not_raise(self, tmp_path, monkeypatch):
         from unittest.mock import patch
         from src.new_york_workflow.nyc_alerts import AlertStore
-        from src.config import settings
+        from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
         with patch("requests.post", side_effect=Exception("network down")):
@@ -970,7 +970,7 @@ class TestSlackAlerts:
     def test_push_once_dedup_still_works_with_slack(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
         from src.new_york_workflow.nyc_alerts import AlertStore
-        from src.config import settings
+        from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
         mock_resp = MagicMock()

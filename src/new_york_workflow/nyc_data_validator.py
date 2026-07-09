@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from src.exceptions import DataQualityError
+from src.core.exceptions import DataQualityError
 
 import numpy as np
 import pandas as pd

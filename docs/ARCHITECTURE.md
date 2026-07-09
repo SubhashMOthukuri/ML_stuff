@@ -82,14 +82,23 @@ The core of the system. Two distinct concerns live here:
 | `pipeline/2_feature_engineering.py` | Log transforms, borough dummies, polynomials, interaction terms, target encoding. |
 | `pipeline/3_train_model.py` | Ridge / RF / XGBoost benchmark + hyperparameter search. Saves models + training report. |
 
-### `src/` (shared utilities)
+### `src/core/` — application infrastructure
+
+These are singletons and registries shared across every module. They have no domain logic.
 
 | File | What it does |
 |------|-------------|
-| `config.py` | Pydantic Settings — reads all env vars, provides typed defaults. Single source of truth. |
-| `metrics.py` | Prometheus counters/histograms. Imported by nyc_api.py. |
-| `logger_config.py` | structlog setup (JSON format in prod, pretty in dev). |
-| `exceptions.py` | Custom exception types shared across modules. |
+| `core/config.py` | Pydantic Settings — reads all env vars, typed defaults. Single source of truth for configuration. |
+| `core/metrics.py` | Prometheus counters/histograms. Imported by nyc_api.py and nyc_drift.py. |
+| `core/logging.py` | structlog setup — JSON in prod, pretty-printed in dev. Call `setup_logging()` once at startup. |
+| `core/exceptions.py` | Custom exception types (`DataQualityError`, etc.) shared across modules. |
+
+### `src/utils/` — helper functions
+
+Stateless utilities with no app dependencies. Can be imported anywhere without circular risk.
+
+| File | What it does |
+|------|-------------|
 | `utils/retry.py` | Exponential backoff retry decorator. |
 | `utils/timing.py` | Context-manager timing utility. |
 
