@@ -24,7 +24,7 @@ import pytest
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def post_predict(client, payload):
-    return client.post("/predict", json=payload)
+    return client.post("/v1/predict", json=payload)
 
 
 def with_override(base: dict, **overrides) -> dict:
@@ -156,30 +156,30 @@ class TestMetrics:
 
 class TestModelInfo:
     def test_model_info_200(self, client):
-        assert client.get("/model-info").status_code == 200
+        assert client.get("/v1/model-info").status_code == 200
 
     def test_model_type_xgboost(self, client):
-        assert "XGB" in client.get("/model-info").json()["model_type"]
+        assert "XGB" in client.get("/v1/model-info").json()["model_type"]
 
     def test_n_features_is_67(self, client):
-        assert client.get("/model-info").json()["n_features"] == 67
+        assert client.get("/v1/model-info").json()["n_features"] == 67
 
     def test_r2_test_correct(self, client):
-        r2 = client.get("/model-info").json()["r2_test"]
+        r2 = client.get("/v1/model-info").json()["r2_test"]
         assert r2 >= 0.80, f"Model R² {r2:.4f} is below acceptable threshold of 0.80"
 
     def test_has_mae_and_mape(self, client):
-        body = client.get("/model-info").json()
+        body = client.get("/v1/model-info").json()
         assert "mae_dollar" in body
         assert "mape_pct" in body
         assert body["mae_dollar"] > 0
         assert body["mape_pct"] > 0
 
     def test_n_features_present(self, client):
-        assert client.get("/model-info").json()["n_features"] > 0
+        assert client.get("/v1/model-info").json()["n_features"] > 0
 
     def test_n_neighbourhoods_reasonable(self, client):
-        n = client.get("/model-info").json()["n_neighbourhoods"]
+        n = client.get("/v1/model-info").json()["n_neighbourhoods"]
         # NYC has ~200+ Airbnb neighbourhoods
         assert n > 100
 
@@ -483,10 +483,10 @@ class TestPydanticValidation:
         assert post_predict(client, with_override(valid_listing, accommodates="two")).status_code == 422
 
     def test_empty_body_422(self, client):
-        assert client.post("/predict", json={}).status_code == 422
+        assert client.post("/v1/predict", json={}).status_code == 422
 
     def test_non_json_body_422(self, client):
-        r = client.post("/predict", content="not json", headers={"Content-Type": "application/json"})
+        r = client.post("/v1/predict", content="not json", headers={"Content-Type": "application/json"})
         assert r.status_code == 422
 
     def test_422_response_has_detail_field(self, client, valid_listing):
@@ -588,13 +588,13 @@ class TestPredictBatch:
     """
 
     def _submit(self, client, listings, explain=False):
-        return client.post("/predict-batch", json={"listings": listings, "explain": explain})
+        return client.post("/v1/predict-batch", json={"listings": listings, "explain": explain})
 
     def _poll(self, client, job_id, timeout=10):
         import time
         deadline = time.time() + timeout
         while time.time() < deadline:
-            r = client.get(f"/predict-batch/{job_id}")
+            r = client.get(f"/v1/predict-batch/{job_id}")
             if r.status_code != 200:
                 return r
             if r.json()["status"] in ("done", "failed"):
@@ -624,7 +624,7 @@ class TestPredictBatch:
         if r.status_code == 503:
             pytest.skip("Redis not available")
         body = r.json()
-        assert body["status_url"] == f"/predict-batch/{body['job_id']}"
+        assert body["status_url"] == f"/v1/predict-batch/{body['job_id']}"
 
     # ── polling + results ─────────────────────────────────────────────────────
 
@@ -693,7 +693,7 @@ class TestPredictBatch:
     # ── not found ─────────────────────────────────────────────────────────────
 
     def test_unknown_job_id_returns_404(self, client):
-        r = client.get("/predict-batch/00000000-0000-0000-0000-000000000000")
+        r = client.get("/v1/predict-batch/00000000-0000-0000-0000-000000000000")
         if r.status_code == 503:
             pytest.skip("Redis not available")
         assert r.status_code == 404
@@ -713,9 +713,9 @@ class TestMetricsTracking:
     """
 
     def test_predict_increments_request_count(self, client, valid_listing):
-        before = client.get("/metrics/summary").json()["endpoints"].get("/predict", {}).get("requests", 0)
+        before = client.get("/metrics/summary").json()["endpoints"].get("/v1/predict", {}).get("requests", 0)
         post_predict(client, valid_listing)
-        after  = client.get("/metrics/summary").json()["endpoints"].get("/predict", {}).get("requests", 0)
+        after  = client.get("/metrics/summary").json()["endpoints"].get("/v1/predict", {}).get("requests", 0)
         assert after == before + 1
 
     def test_prediction_total_increments(self, client, valid_listing):
@@ -734,12 +734,12 @@ class TestMetricsTracking:
         """Batch async — verify both listings reach 'done' status."""
         import time
         brooklyn = with_override(valid_listing, borough="Brooklyn", latitude=40.68, longitude=-73.94)
-        r = client.post("/predict-batch", json={"listings": [valid_listing, brooklyn]})
+        r = client.post("/v1/predict-batch", json={"listings": [valid_listing, brooklyn]})
         if r.status_code == 503:
             pytest.skip("Redis not available")
         job_id = r.json()["job_id"]
         for _ in range(50):
-            job = client.get(f"/predict-batch/{job_id}").json()
+            job = client.get(f"/v1/predict-batch/{job_id}").json()
             if job["status"] == "done":
                 break
             time.sleep(0.2)
@@ -751,14 +751,14 @@ class TestMetricsTracking:
         # 422 (Pydantic / predictor ValueError) are NOT counted as errors by the middleware —
         # only HTTP 5xx increments the error counter. A 422 is a client error, not a server error.
         # So we verify the error counter does NOT change on a validation failure.
-        before_errs = client.get("/metrics/summary").json()["endpoints"].get("/predict", {}).get("errors", 0)
+        before_errs = client.get("/metrics/summary").json()["endpoints"].get("/v1/predict", {}).get("errors", 0)
         post_predict(client, with_override(valid_listing, borough="Narnia"))  # → 422, not a server error
-        after_errs  = client.get("/metrics/summary").json()["endpoints"].get("/predict", {}).get("errors", 0)
+        after_errs  = client.get("/metrics/summary").json()["endpoints"].get("/v1/predict", {}).get("errors", 0)
         assert after_errs == before_errs  # counter unchanged — 422 ≠ server error
 
     def test_predict_latency_recorded_after_request(self, client, valid_listing):
         post_predict(client, valid_listing)
-        latency = client.get("/metrics/summary").json()["endpoints"]["/predict"]["latency_ms"]
+        latency = client.get("/metrics/summary").json()["endpoints"]["/v1/predict"]["latency_ms"]
         assert latency["avg"] is not None
         assert latency["avg"] > 0
         assert latency["min"] is not None
@@ -845,14 +845,14 @@ class TestAPIKeyAuth:
         from fastapi.testclient import TestClient as TC
         # Fresh client with NO default headers — no key passed
         with TC(app) as c:
-            r = c.post("/predict", json=valid_listing)
+            r = c.post("/v1/predict", json=valid_listing)
         assert r.status_code == 401
 
     def test_predict_with_wrong_key_returns_401(self, valid_listing):
         from src.new_york_workflow.nyc_api import app
         from fastapi.testclient import TestClient as TC
         with TC(app, headers={"X-API-Key": "completely-wrong"}) as c:
-            r = c.post("/predict", json=valid_listing)
+            r = c.post("/v1/predict", json=valid_listing)
         assert r.status_code == 401
 
     def test_health_exempt_from_auth(self):
@@ -879,7 +879,7 @@ class TestAPIKeyAuth:
 
     def test_valid_key_from_session_fixture_works(self, client, valid_listing):
         # Verify the session-scoped client (with test key in default headers) passes auth
-        r = client.post("/predict", json=valid_listing)
+        r = client.post("/v1/predict", json=valid_listing)
         assert r.status_code == 200
 
     def test_auth_disabled_when_valid_api_keys_empty(self, valid_listing, monkeypatch):
@@ -888,7 +888,7 @@ class TestAPIKeyAuth:
         monkeypatch.setattr(settings, "valid_api_keys", "")
         from fastapi.testclient import TestClient as TC
         with TC(nyc_api.app) as c:
-            r = c.post("/predict", json=valid_listing)
+            r = c.post("/v1/predict", json=valid_listing)
         assert r.status_code == 200  # auth off — no key needed
 
 
@@ -997,12 +997,12 @@ class TestPrometheusMetrics:
         assert "http_requests_total" in body
 
     def test_prometheus_has_nyc_predictions(self, client, valid_listing):
-        client.post("/predict", json=valid_listing)
+        client.post("/v1/predict", json=valid_listing)
         body = client.get("/metrics").text
         assert "nyc_predictions_total" in body
 
     def test_prometheus_has_nyc_price_histogram(self, client, valid_listing):
-        client.post("/predict", json=valid_listing)
+        client.post("/v1/predict", json=valid_listing)
         body = client.get("/metrics").text
         assert "nyc_prediction_price_usd" in body
 

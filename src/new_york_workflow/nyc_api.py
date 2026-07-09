@@ -42,7 +42,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal, Optional, List
 
-from fastapi import FastAPI, HTTPException, Request, Response, Header, Depends, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Header, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -214,6 +214,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Versioned router — prediction API contract (what external callers depend on).
+# Ops/infra endpoints (/health, /metrics, /dlq, /drift, etc.) stay at root.
+v1_router = APIRouter(prefix="/v1")
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -316,7 +320,6 @@ async def request_context_middleware(request: Request, call_next) -> Response:
         path=request.url.path,
     )
     return await call_next(request)
-
 
 # ── schemas ───────────────────────────────────────────────────────────────────
 
@@ -453,7 +456,7 @@ def prometheus_metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/model-info")
+@v1_router.get("/model-info")
 def model_info():
     """
     Current champion model metadata.
@@ -661,7 +664,7 @@ def acknowledge_all_alerts():
     return {"acknowledged_count": n}
 
 
-@app.post("/predict", response_model=PredictionResponse)
+@v1_router.post("/predict", response_model=PredictionResponse)
 @limiter.limit(settings.rate_limit)
 def predict(listing: ListingFeatures, request: Request,
             explain: bool = Query(False, description="Include SHAP top-5 feature contributions")):
@@ -818,7 +821,7 @@ def predict(listing: ListingFeatures, request: Request,
         )
 
 
-@app.post("/predict-batch", response_model=BatchJobQueued, status_code=202)
+@v1_router.post("/predict-batch", response_model=BatchJobQueued, status_code=202)
 @limiter.limit("20/minute")
 def predict_batch(body: BatchJobRequest, request: Request):
     """
@@ -839,11 +842,11 @@ def predict_batch(body: BatchJobRequest, request: Request):
         job_id=job_id,
         status="queued",
         total=len(raw_listings),
-        status_url=f"/predict-batch/{job_id}",
+        status_url=f"/v1/predict-batch/{job_id}",
     )
 
 
-@app.get("/predict-batch/{job_id}", response_model=BatchJobStatus)
+@v1_router.get("/predict-batch/{job_id}", response_model=BatchJobStatus)
 def get_batch_status(job_id: str):
     """
     Poll a batch job for status and results.
@@ -1038,6 +1041,8 @@ def canary_abort():
     """Stop the canary without rolling back or promoting. Equivalent to rollback."""
     return canary.abort()
 
+
+app.include_router(v1_router)
 
 if __name__ == "__main__":
     import uvicorn

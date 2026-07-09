@@ -14,7 +14,7 @@ export default function MetricsPanel({ metrics }) {
 
   const t   = metrics.totals ?? {}
   const p   = metrics.predictions ?? {}
-  const lat = metrics.endpoints?.['/predict']?.latency_ms ?? {}
+  const lat = metrics.endpoints?.['/v1/predict']?.latency_ms ?? {}
   const maxLat = lat.max ?? 0
 
   return (
@@ -43,7 +43,7 @@ export default function MetricsPanel({ metrics }) {
         {/* latency */}
         <div className="rounded-xl border border-white/6 bg-black/20 p-3.5 space-y-3">
           <p className="text-white/30 text-[11px] font-semibold uppercase tracking-widest">
-            Latency · /predict
+            Latency · /v1/predict
           </p>
           <div className="grid grid-cols-3 gap-2 text-center">
             <LatNum label="avg" value={lat.avg != null ? `${lat.avg}ms` : null} />

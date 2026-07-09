@@ -13,7 +13,7 @@ export function useMetrics(intervalMs = 5000) {
 
   const fetchModelInfo = useCallback(async () => {
     try {
-      const r = await fetch('/api/model-info')
+      const r = await fetch('/api/v1/model-info')
       if (r.ok) setModelInfo(await r.json())
     } catch {}
   }, [])

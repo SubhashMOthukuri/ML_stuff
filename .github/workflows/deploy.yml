@@ -142,8 +142,11 @@ jobs:
 
       - name: Update image tags in values.yaml
         run: |
-          TAG=${{ needs.build-backend.outputs.image_tag }}
-          sed -i "s|tag: .*|tag: $TAG|g" infra/helm/nyc-airbnb/values.yaml
+          API_TAG=${{ needs.build-backend.outputs.image_tag }}
+          FE_TAG=${{ needs.build-frontend.outputs.image_tag }}
+          # 2-space indent = API image tag; 4-space indent = frontend image tag
+          sed -i "s|^  tag: .*|  tag: $API_TAG|" infra/helm/nyc-airbnb/values.yaml
+          sed -i "s|^    tag: .*|    tag: $FE_TAG|" infra/helm/nyc-airbnb/values.yaml
 
       - name: Commit & push updated tag
         run: |

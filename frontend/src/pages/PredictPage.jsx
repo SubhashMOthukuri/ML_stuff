@@ -73,7 +73,7 @@ export default function PredictPage() {
       instant_bookable:            form.instant_bookable ? 1 : 0,
     }
     try {
-      const res = await fetch('/api/predict?explain=true', {
+      const res = await fetch('/api/v1/predict?explain=true', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(payload),

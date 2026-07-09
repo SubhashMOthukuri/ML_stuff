@@ -7,11 +7,11 @@ export default function OpsPage() {
   const metrics  = usePolling('/api/metrics/summary', 5000)
   const dlq      = usePolling('/api/dlq?n=20', 10000)
   const tdStats  = usePolling('/api/training-data/stats', 10000)
-  const modelReg = usePolling('/api/model-info', null)   // fetch once; user refreshes manually
+  const modelReg = usePolling('/api/v1/model-info', null)   // fetch once; user refreshes manually
 
   const h = health.data ?? {}
   const m = metrics.data ?? {}
-  const lat = m.endpoints?.['/predict']?.latency_ms ?? {}
+  const lat = m.endpoints?.['/v1/predict']?.latency_ms ?? {}
   const cache = h.cache ?? {}
 
   const [downloading, setDownloading]         = useState(false)
