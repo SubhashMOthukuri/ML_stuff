@@ -75,6 +75,7 @@ from src.new_york_workflow.nyc_shadow import ShadowPredictor
 from src.new_york_workflow.nyc_ground_truth import GroundTruthStore
 from src.new_york_workflow.nyc_ab import ABTest
 from src.new_york_workflow.nyc_canary import CanaryDeployment
+from src.new_york_workflow.nyc_batch import BatchJobStore, BatchWorker, MAX_BATCH_SIZE
 from scripts.fetch_ground_truth import run as run_ground_truth_ingest, INSIDEAIRBNB_URL
 
 setup_logging()
@@ -144,12 +145,14 @@ shadow:       ShadowPredictor        = None
 ground_truth: GroundTruthStore       = None
 ab_test:      ABTest                 = None
 canary:       CanaryDeployment       = None
+batch_store:  BatchJobStore          = None
+batch_worker: BatchWorker            = None
 _r2_test:     float                  = 0.0
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global predictor, cache, store, dlq, drift, shadow, ground_truth, ab_test, canary, _r2_test
+    global predictor, cache, store, dlq, drift, shadow, ground_truth, ab_test, canary, batch_store, batch_worker, _r2_test
 
     logger.info("Startup — initialising services")
     predictor    = NYCAirbnbPredictorONNX()
@@ -186,7 +189,19 @@ async def lifespan(app: FastAPI):
         f"active({ab_test.test_id})" if ab_test.active else "idle",
         f"active({canary.current_pct}%)" if canary.active else "idle",
     )
+    # Async batch queue — uses the same Redis client as the cache
+    batch_store  = BatchJobStore(cache._client)
+    batch_worker = BatchWorker(cache._client, batch_store, predictor)
+    if batch_store.available:
+        batch_worker.start()
+        logger.info("BatchWorker started — queue=batch:queue max=%d", MAX_BATCH_SIZE)
+    else:
+        logger.warning("BatchWorker disabled — Redis unavailable")
+
     yield
+
+    if batch_worker:
+        batch_worker.stop()
     logger.info("Shutdown")
 
 
@@ -337,6 +352,7 @@ class ListingFeatures(BaseModel):
     has_air_conditioning:        bool  = False
     has_washer:                  bool  = False
     has_pool:                    bool  = False
+    instant_bookable:            bool  = False
     checkin_date:                Optional[str] = Field(None, description="Check-in date (YYYY-MM-DD) — used to compute days_to_checkin")
 
 
@@ -354,10 +370,26 @@ class PredictionResponse(BaseModel):
     top_features:            Optional[list] = None  # SHAP explanation (opt-in via ?explain=true)
 
 
-class BatchPredictionResponse(BaseModel):
-    predictions: list
-    succeeded:   int
-    requested:   int
+class BatchJobRequest(BaseModel):
+    listings: List[ListingFeatures] = Field(..., min_length=1, max_length=MAX_BATCH_SIZE)
+    explain:  bool = Field(False, description="Include SHAP top-5 for each listing (slower)")
+
+class BatchJobQueued(BaseModel):
+    job_id:     str
+    status:     str
+    total:      int
+    status_url: str
+
+class BatchJobStatus(BaseModel):
+    job_id:       str
+    status:       str   # queued | processing | done | failed
+    total:        int
+    done:         int
+    explain:      bool
+    created_at:   str
+    completed_at: Optional[str]
+    results:      list
+    errors:       list
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
@@ -786,50 +818,52 @@ def predict(listing: ListingFeatures, request: Request,
         )
 
 
-@app.post("/predict-batch")
-@limiter.limit(settings.rate_limit)
-def predict_batch(listings: List[dict], request: Request):
-    """Batch predict up to 100 listings. Stricter rate limit: 20/minute."""
-    if len(listings) > 100:
-        raise HTTPException(status_code=422, detail="Batch size exceeds maximum of 100")
+@app.post("/predict-batch", response_model=BatchJobQueued, status_code=202)
+@limiter.limit("20/minute")
+def predict_batch(body: BatchJobRequest, request: Request):
+    """
+    Enqueue a batch of up to 50 listings for async pricing.
+    Returns a job_id immediately — poll GET /predict-batch/{job_id} for results.
+    Results are available within seconds and expire after 1 hour.
+    """
+    if not batch_store or not batch_store.available:
+        raise HTTPException(503, "Batch queue unavailable — Redis not connected")
 
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-    with tracer.start_as_current_span("predict_batch") as span:
-        span.set_attribute("batch.size", len(listings))
-        results = []
-        for i, raw_item in enumerate(listings):
-            try:
-                listing = ListingFeatures.model_validate(raw_item)
-            except ValidationError as exc:
-                err = "; ".join(
-                    f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
-                    for e in exc.errors()
-                )
-                logger.warning("Batch item %d validation error: %s", i, err)
-                results.append({"index": i, "price_usd": None, "cache_hit": False, "error": err})
-                continue
+    raw_listings = [
+        l.model_dump() for l in body.listings
+    ]
+    job_id = batch_store.create(raw_listings, explain=body.explain)
 
-            lid = listing.listing_id
-            raw = listing.model_dump(exclude={"listing_id"})
-            cached = cache.get(raw)
-            if cached:
-                results.append({"index": i, **cached, "cache_hit": True, "error": None})
-                store.log_prediction(f"{request_id}:{i}", raw, cached, cache_hit=True, listing_id=lid)
-                metrics.record_prediction(cached["price_usd"])
-            else:
-                try:
-                    result = predictor.predict_raw(raw)
-                    cache.set(raw, result)
-                    store.log_prediction(f"{request_id}:{i}", raw, result, cache_hit=False, listing_id=lid)
-                    metrics.record_prediction(result["price_usd"])
-                    results.append({"index": i, **result, "cache_hit": False, "error": None})
-                except Exception as exc:
-                    logger.warning("Batch item %d failed: %s", i, exc)
-                    results.append({"index": i, "price_usd": None, "cache_hit": False, "error": str(exc)})
+    logger.info("batch enqueued job=%s n=%d explain=%s", job_id[:8], len(raw_listings), body.explain)
+    return BatchJobQueued(
+        job_id=job_id,
+        status="queued",
+        total=len(raw_listings),
+        status_url=f"/predict-batch/{job_id}",
+    )
 
-        succeeded = sum(1 for r in results if r["error"] is None)
-        span.set_attribute("batch.succeeded", succeeded)
-        return BatchPredictionResponse(predictions=results, succeeded=succeeded, requested=len(listings))
+
+@app.get("/predict-batch/{job_id}", response_model=BatchJobStatus)
+def get_batch_status(job_id: str):
+    """
+    Poll a batch job for status and results.
+
+    status values:
+      queued      — waiting in queue
+      processing  — worker is running; done/total shows progress
+      done        — all listings processed; results + errors are final
+      failed      — worker crashed (rare); retry the job
+
+    Results expire 1 hour after the job was created.
+    """
+    if not batch_store or not batch_store.available:
+        raise HTTPException(503, "Batch queue unavailable — Redis not connected")
+
+    doc = batch_store.get(job_id)
+    if doc is None:
+        raise HTTPException(404, detail=f"Job {job_id!r} not found or expired (TTL 1 hour)")
+
+    return BatchJobStatus(**doc)
 
 
 @app.get("/shadow/stats")
