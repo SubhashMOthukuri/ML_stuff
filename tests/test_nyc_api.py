@@ -161,8 +161,8 @@ class TestModelInfo:
     def test_model_type_xgboost(self, client):
         assert "XGB" in client.get("/model-info").json()["model_type"]
 
-    def test_n_features_is_58(self, client):
-        assert client.get("/model-info").json()["n_features"] == 58
+    def test_n_features_is_67(self, client):
+        assert client.get("/model-info").json()["n_features"] == 67
 
     def test_r2_test_correct(self, client):
         r2 = client.get("/model-info").json()["r2_test"]
