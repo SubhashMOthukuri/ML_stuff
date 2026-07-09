@@ -232,7 +232,7 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
             <Slider
               value={form.review_scores_rating} onChange={v => set('review_scores_rating', v)}
               min={0} max={5} step={0.1}
-              format={v => v === 0 ? 'No reviews yet' : `${v.toFixed(1)} ★`}
+              format={v => v === 0 ? 'Unrated' : `${v.toFixed(1)} ★`}
             />
           </div>
           <div>

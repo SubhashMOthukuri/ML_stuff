@@ -37,6 +37,7 @@ export default function PredictPage() {
   async function handleSubmit() {
     setLoading(true)
     setError(null)
+    setResult(null)
     const coords = BOROUGH_COORDS[form.borough] ?? [40.7128, -74.006]
     const beds   = Math.max(form.bedrooms, 1)
     const payload = {

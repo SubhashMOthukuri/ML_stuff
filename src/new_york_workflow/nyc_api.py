@@ -153,6 +153,16 @@ async def lifespan(app: FastAPI):
 
     logger.info("Startup — initialising services")
     predictor    = NYCAirbnbPredictorONNX()
+
+    # Pre-warm SHAP in background so first ?explain=true request doesn't 502
+    from threading import Thread
+    def _prewarm_shap():
+        try:
+            predictor._get_shap_explainer()
+            logger.info("SHAP pre-warm complete")
+        except Exception as exc:
+            logger.warning("SHAP pre-warm failed: %s", exc)
+    Thread(target=_prewarm_shap, daemon=True).start()
     cache        = PredictionCache()
     store        = RequestStore()
     dlq          = DeadLetterQueue()

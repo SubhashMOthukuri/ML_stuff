@@ -144,6 +144,7 @@ class NYCAirbnbPredictorONNX:
         "has_dryer":                   "Dryer",
         "host_is_superhost":           "Superhost",
         "instant_bookable":            "Instant bookable",
+        "is_private_bath":             "Private bathroom",
         "dist_from_midtown":           "Distance from Midtown",
         "minimum_nights":              "Minimum nights",
         "host_listings_count":         "Host listings count",
@@ -270,7 +271,10 @@ class NYCAirbnbPredictorONNX:
         r["latitude"]                    = raw["latitude"]
         r["longitude"]                   = raw["longitude"]
         r["minimum_nights"]              = raw["minimum_nights"]
-        r["minimum_nights_avg_ntm"]      = raw.get("minimum_nights_avg_ntm") or raw["minimum_nights"]
+        # Training mean for minimum_nights_avg_ntm is ~25.5 (NYC 30-day minimum laws skew data).
+        # Using the listing's own minimum_nights as fallback inflates predictions for 7-30 night
+        # listings by double-counting the effect. Default to training mean instead.
+        r["minimum_nights_avg_ntm"]      = raw.get("minimum_nights_avg_ntm") or 25.0
         r["number_of_reviews"]           = raw["number_of_reviews"]
         r["number_of_reviews_ltm"]       = raw.get("number_of_reviews_ltm", 0)
         r["reviews_per_month"]           = raw["reviews_per_month"]
