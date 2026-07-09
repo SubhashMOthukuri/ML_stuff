@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-drift-check
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: "0 6 * * *"        # 06:00 UTC daily
+  concurrencyPolicy: Forbid    # skip if previous run still going
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1          # one retry before marking Failed
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: drift-check
+              image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["python", "scripts/drift_check.py", "--window-hours", "24"]
+              envFrom:
+                - secretRef:
+                    name: {{ .Values.secretName }}
+              env:
+                {{- range $key, $val := .Values.env }}
+                - name: {{ $key }}
+                  value: {{ $val | quote }}
+                {{- end }}
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi

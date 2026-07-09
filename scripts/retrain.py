@@ -99,7 +99,7 @@ XGB_PARAMS = {
     "verbosity":        0,
 }
 
-OPTUNA_N_TRIALS = 20    # ~3-5 min on GH Actions ubuntu-latest; raise for quality, lower for speed
+OPTUNA_N_TRIALS = 50    # ~8-12 min on GH Actions ubuntu-latest; 50 gives meaningfully better params than 20
 OPTUNA_CV_FOLDS = 3     # cross-validation folds for objective — faster than full train+eval
 
 
@@ -251,6 +251,11 @@ def download_s3_snapshot(index: int | None = None) -> Path:
 
     logger.info("Downloaded %.1f MB → %s", out_path.stat().st_size / 1e6, out_path)
     return out_path
+
+
+def download_all_s3_snapshots() -> list[Path]:
+    """Download all S3 snapshots and return their local paths."""
+    return [download_s3_snapshot(index=i) for i in range(S3_SNAPSHOT_COUNT)]
 
 
 # ── production pipeline (cleaning + feature engineering) ──────────────────────
@@ -440,11 +445,13 @@ def load_training_data(
     no_download: bool = False,
     s3_snapshot: bool = False,
     s3_index: int | None = None,
+    all_months: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     """
     Load the training dataset.  Returns (df, provenance_dict).
 
     no_download=True  : use existing engineered_features.csv on disk (fastest, no network)
+    all_months=True   : combine all 3 S3 snapshots (Feb+March+April) — more data, better model
     s3_snapshot=True  : download one of 3 pre-uploaded InsideAirbnb CSVs from S3
                         (rotates by date unless s3_index is given explicitly)
     default           : auto-download the latest InsideAirbnb NYC snapshot
@@ -459,6 +466,23 @@ def load_training_data(
         path = DATA_DIR / "engineered_features.csv"
         logger.info("--no-download: using existing %s", path)
         df = pd.read_csv(path)
+    elif all_months:
+        logger.info("--all-months: combining all %d S3 snapshots for maximum training data", S3_SNAPSHOT_COUNT)
+        paths    = download_all_s3_snapshots()
+        rows_raw = sum(pd.read_csv(p, usecols=[0]).shape[0] for p in paths)
+        frames   = []
+        for p in paths:
+            null_pct = _probe_null_price_pct(p)
+            if null_pct > 0.95:
+                logger.warning("Skipping %s — %.0f%% null prices (format-removed snapshot)", p.name, null_pct * 100)
+                continue
+            logger.info("Including %s (%.0f%% null prices — normal)", p.name, null_pct * 100)
+            frames.append(clean_and_engineer(p))
+        if not frames:
+            raise RuntimeError("All S3 snapshots have null prices — cannot train. Re-upload valid CSVs.")
+        df      = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["id"])
+        s3_key  = f"{S3_TRAINING_PREFIX}/listings_all"
+        logger.info("Combined %d valid snapshots → %d unique listings after dedup", len(frames), len(df))
     elif s3_snapshot:
         if s3_index is None:
             s3_index = date.today().toordinal() % S3_SNAPSHOT_COUNT
@@ -861,6 +885,7 @@ def main(
     skip_optuna: bool = False,
     s3_snapshot: bool = False,
     s3_index: int | None = None,
+    all_months: bool = False,
 ):
     if rollback_version is not None:
         rollback(rollback_version)
@@ -876,7 +901,12 @@ def main(
     # Load data, then split BEFORE target-encoding neighbourhood —
     # same random_state/test_size as the split below reproduces identical
     # train row IDs, so the encoding never sees test-set prices.
-    df, data_prov = load_training_data(no_download=no_download, s3_snapshot=s3_snapshot, s3_index=s3_index)
+    df, data_prov = load_training_data(
+        no_download=no_download,
+        s3_snapshot=s3_snapshot,
+        s3_index=s3_index,
+        all_months=all_months,
+    )
     train_idx, _ = train_test_split(df.index, test_size=TEST_SIZE, random_state=RANDOM_SEED)
     df, neighbourhood_means_artefact = add_neighbourhood_target_encoding(df, train_idx)
 
@@ -1026,6 +1056,13 @@ if __name__ == "__main__":
         "--s3-index", type=int, choices=[0, 1, 2], default=None,
         help="Override S3 snapshot index (0=Feb, 1=March, 2=April). Defaults to date-based rotation.",
     )
+    parser.add_argument(
+        "--all-months", action="store_true",
+        help=(
+            "Combine all 3 S3 snapshots (Feb+March+April) into one training set. "
+            "More data → better generalisation. Deduplicates on listing ID."
+        ),
+    )
     args = parser.parse_args()
     main(
         force=args.force,
@@ -1034,4 +1071,5 @@ if __name__ == "__main__":
         skip_optuna=args.skip_optuna,
         s3_snapshot=args.s3_snapshot,
         s3_index=args.s3_index,
+        all_months=args.all_months,
     )

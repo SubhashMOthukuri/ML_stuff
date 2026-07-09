@@ -65,6 +65,11 @@ class NYCAirbnbPredictorONNX:
         report_path = model_dir / "nyc_training_report.json"
         self._report = json.loads(report_path.read_text()) if report_path.exists() else {}
 
+        # SHAP TreeExplainer — uses XGBoost pkl (not ONNX) to read tree structure.
+        # Initialized lazily on first explain call so startup is never blocked.
+        self._shap_explainer = None
+        self._xgb_pkl_path   = model_dir / "nyc_xgb_model.pkl"
+
         logger.info(
             "NYCAirbnbPredictorONNX ready | providers=%s features=%d neighbourhoods=%d",
             providers, len(self.feature_list), len(self.neighbourhood_means),
@@ -113,6 +118,114 @@ class NYCAirbnbPredictorONNX:
                 results.append({"index": i, "price_usd": None, "error": str(exc)})
         return results
 
+    # Human-readable labels for the top features shown in explanations.
+    # Unmapped names fall back to the raw feature name.
+    _FEATURE_LABELS: dict[str, str] = {
+        "neighbourhood_price_rank":    "Neighbourhood",
+        "neighbourhood_median_price":  "Neighbourhood median",
+        "accommodates":                "Guests capacity",
+        "bedrooms":                    "Bedrooms",
+        "bathrooms":                   "Bathrooms",
+        "room_type_Entire home/apt":   "Entire home/apt",
+        "room_type_Private room":      "Private room",
+        "room_type_Shared room":       "Shared room",
+        "room_type_Hotel room":        "Hotel room",
+        "borough_Manhattan":           "Manhattan",
+        "borough_Brooklyn":            "Brooklyn",
+        "borough_Queens":              "Queens",
+        "borough_Staten Island":       "Staten Island",
+        "review_scores_rating":        "Rating",
+        "amenity_count":               "Amenity count",
+        "has_gym":                     "Gym",
+        "has_pool":                    "Pool",
+        "has_elevator":                "Elevator",
+        "has_air_conditioning":        "Air conditioning",
+        "has_washer":                  "Washer",
+        "has_dryer":                   "Dryer",
+        "host_is_superhost":           "Superhost",
+        "instant_bookable":            "Instant bookable",
+        "dist_from_midtown":           "Distance from Midtown",
+        "minimum_nights":              "Minimum nights",
+        "host_listings_count":         "Host listings count",
+        "is_peak_season":              "Peak season",
+        "is_weekend":                  "Weekend",
+        "instant_bookable":            "Instant bookable",
+        "log_accommodates":            "Guests capacity (log)",
+        "log_bedrooms":                "Bedrooms (log)",
+        "log_bathrooms":               "Bathrooms (log)",
+        "log_amenity_count":           "Amenity count (log)",
+        "log_minimum_nights":          "Minimum nights (log)",
+        "log_minimum_nights_avg_ntm":  "Min nights (rolling avg) (log)",
+        "log_number_of_reviews":       "Reviews count (log)",
+        "log_number_of_reviews_ltm":   "Reviews last 12mo (log)",
+        "log_reviews_per_month":       "Reviews/month (log)",
+        "log_host_listings_count":     "Host listings (log)",
+        "number_of_reviews_ltm":       "Reviews last 12 months",
+        "minimum_nights_avg_ntm":      "Min nights (rolling avg)",
+        "minimum_minimum_nights":      "Min minimum nights",
+        "accommodates_sq":             "Guests² (capacity scale)",
+        "accommodates_x_review_scores_rating": "Guests × rating",
+        "bedrooms_x_review_scores_rating":     "Bedrooms × rating",
+        "host_listings_count_x_review_scores_rating": "Host listings × rating",
+        "accommodates_x_host_is_superhost": "Guests × superhost",
+        "minimum_nights_x_accommodates": "Min nights × guests",
+        "accommodates_x_bedrooms":     "Guests × bedrooms",
+        "room_type_Private room_x_review_scores_rating": "Private room × rating",
+        "room_type_Entire home/apt_x_bedrooms": "Entire home × bedrooms",
+        "room_type_Shared room_x_accommodates": "Shared room × guests",
+        "guests_per_bedroom":          "Guests per bedroom",
+        "guests_per_bathroom":         "Guests per bathroom",
+        "overcrowding_ratio":          "Overcrowding",
+        "reviews_per_bedroom":         "Reviews per bedroom",
+        "reviews_per_accommodates":    "Reviews per guest",
+        "host_density":                "Host listing density",
+        "review_score_std":            "Rating consistency",
+        "days_to_checkin":             "Days until check-in",
+        "month":                       "Month",
+        "day_of_week":                 "Day of week",
+        "is_weekend":                  "Weekend",
+    }
+
+    def _get_shap_explainer(self):
+        """Lazy-init TreeExplainer — loads XGBoost pkl once, reuses forever."""
+        if self._shap_explainer is not None:
+            return self._shap_explainer
+        import shap
+        with open(self._xgb_pkl_path, "rb") as f:
+            xgb_model = pickle.load(f)
+        self._shap_explainer = shap.TreeExplainer(xgb_model)
+        logger.info("SHAP TreeExplainer initialised from %s", self._xgb_pkl_path.name)
+        return self._shap_explainer
+
+    def explain_raw(self, raw: dict, price_usd: float, top_n: int = 5) -> list[dict]:
+        """
+        Return the top_n features driving this prediction with dollar contributions.
+
+        SHAP values are in log-price space (model predicts log1p(price)).
+        Dollar contribution ≈ shap_val * price_usd  (first-order Taylor expansion).
+        This is the standard production approximation for tree models.
+        """
+        row      = self._engineer(raw)
+        df       = pd.DataFrame([row])[self.feature_list]
+        X_scaled = self.scaler.transform(df).astype(np.float32)
+
+        explainer   = self._get_shap_explainer()
+        shap_values = explainer.shap_values(X_scaled)[0]  # shape: (n_features,)
+
+        contributions = []
+        for feat, sv in zip(self.feature_list, shap_values):
+            dollar = round(float(sv) * price_usd, 2)
+            contributions.append({
+                "feature":          feat,
+                "label":            self._FEATURE_LABELS.get(feat, feat),
+                "shap_value":       round(float(sv), 4),
+                "contribution_usd": dollar,
+                "direction":        "up" if dollar >= 0 else "down",
+            })
+
+        contributions.sort(key=lambda x: abs(x["contribution_usd"]), reverse=True)
+        return contributions[:top_n]
+
     def model_info(self) -> dict:
         xgb_test = self._report.get("models", {}).get("XGBoost", {}).get("test", {})
         return {
@@ -152,6 +265,7 @@ class NYCAirbnbPredictorONNX:
         r["bedrooms"]                    = raw.get("bedrooms", 1.0)
         r["bathrooms"]                   = raw.get("bathrooms", 1.0)
         r["host_is_superhost"]           = int(raw.get("host_is_superhost", False))
+        r["instant_bookable"]            = int(raw.get("instant_bookable", False))
         r["host_listings_count"]         = raw.get("host_listings_count", 1)
         r["latitude"]                    = raw["latitude"]
         r["longitude"]                   = raw["longitude"]

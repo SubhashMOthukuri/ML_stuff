@@ -19,6 +19,13 @@ const DEFAULT_FORM = {
   minimum_nights:       2,
   review_scores_rating: 4.5,
   number_of_reviews:    20,
+  has_air_conditioning: false,
+  has_washer:           false,
+  has_dryer:            false,
+  has_elevator:         false,
+  has_gym:              false,
+  has_pool:             false,
+  instant_bookable:     false,
 }
 
 export default function PredictPage() {
@@ -56,15 +63,16 @@ export default function PredictPage() {
       review_scores_value:         form.review_scores_rating,
       host_is_superhost:           false,
       host_listings_count:         1,
-      has_gym:                     false,
-      has_elevator:                false,
-      has_dryer:                   false,
-      has_air_conditioning:        false,
-      has_washer:                  false,
-      has_pool:                    false,
+      has_gym:                     form.has_gym,
+      has_elevator:                form.has_elevator,
+      has_dryer:                   form.has_dryer,
+      has_air_conditioning:        form.has_air_conditioning,
+      has_washer:                  form.has_washer,
+      has_pool:                    form.has_pool,
+      instant_bookable:            form.instant_bookable ? 1 : 0,
     }
     try {
-      const res = await fetch('/api/predict', {
+      const res = await fetch('/api/predict?explain=true', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(payload),
@@ -102,9 +110,9 @@ export default function PredictPage() {
         </div>
       )}
 
-      {result && (
+      {(result || loading) && (
         <div id="result-anchor">
-          <PredictionResult result={result} form={form} />
+          <PredictionResult result={result} form={form} loading={loading} />
         </div>
       )}
     </div>

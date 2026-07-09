@@ -1,10 +1,11 @@
 import { MapPin, Home, Users, Star } from 'lucide-react'
+import ShapChart from './ShapChart'
 
 const RULE_LABELS = {
-  shared_room_cap:     'Capped for shared room type',
-  hotel_floor:         'Hotel room minimum applied',
-  superhost_premium:   'Superhost premium applied',
-  budget_listing_floor:'Budget listing floor applied',
+  shared_room_cap:      'Capped for shared room type',
+  hotel_floor:          'Hotel room minimum applied',
+  superhost_premium:    'Superhost premium applied',
+  budget_listing_floor: 'Budget listing floor applied',
 }
 
 function friendlyRule(code) {
@@ -14,12 +15,19 @@ function friendlyRule(code) {
   return null
 }
 
-export default function PredictionResult({ result, form }) {
-  if (!result) return null
+export default function PredictionResult({ result, form, loading = false }) {
+  // While a new prediction is loading, keep the previous result visible but
+  // show the SHAP skeleton so the user knows the explanation is refreshing.
+  if (!result && !loading) return null
 
-  const { price_usd, price_low, price_high, business_rules_applied } = result
-  const appliedLabels = (business_rules_applied ?? []).map(friendlyRule).filter(Boolean)
-  const rangePct = ((price_usd - price_low) / (price_high - price_low + 0.01)) * 100
+  const price_usd              = result?.price_usd   ?? 0
+  const price_low              = result?.price_low   ?? 0
+  const price_high             = result?.price_high  ?? 0
+  const business_rules_applied = result?.business_rules_applied ?? []
+  const top_features           = result?.top_features ?? null
+
+  const appliedLabels = business_rules_applied.map(friendlyRule).filter(Boolean)
+  const rangePct      = ((price_usd - price_low) / (price_high - price_low + 0.01)) * 100
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -30,12 +38,18 @@ export default function PredictionResult({ result, form }) {
           Estimated nightly rate
         </p>
         <div className="flex items-end gap-2 mb-3">
-          <span className="text-5xl font-black text-white leading-none">
-            ${Math.round(price_usd)}
-          </span>
-          <span className="text-emerald-200 text-lg font-medium mb-0.5">/night</span>
+          {loading && !result ? (
+            <div className="h-12 w-32 bg-emerald-500 rounded-xl animate-pulse" />
+          ) : (
+            <>
+              <span className="text-5xl font-black text-white leading-none">
+                ${Math.round(price_usd)}
+              </span>
+              <span className="text-emerald-200 text-lg font-medium mb-0.5">/night</span>
+            </>
+          )}
         </div>
-        {form.minimum_nights > 1 && (
+        {form.minimum_nights > 1 && price_usd > 0 && (
           <div className="bg-emerald-700/60 rounded-xl px-4 py-2.5 flex items-center justify-between">
             <span className="text-emerald-100 text-sm">
               Total for {form.minimum_nights} nights
@@ -100,7 +114,7 @@ export default function PredictionResult({ result, form }) {
         </div>
       </div>
 
-      {/* adjustments */}
+      {/* business rule adjustments */}
       {appliedLabels.length > 0 && (
         <div className="px-6 py-4 border-b border-slate-100 bg-amber-50">
           <p className="text-xs font-semibold text-amber-700 mb-2">Adjustments applied</p>
@@ -112,6 +126,9 @@ export default function PredictionResult({ result, form }) {
           ))}
         </div>
       )}
+
+      {/* SHAP explanation — shows skeleton while loading, chart when ready */}
+      <ShapChart features={top_features} loading={loading} />
 
       {/* footer */}
       <div className="px-6 py-4 bg-slate-50">

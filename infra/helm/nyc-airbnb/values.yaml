@@ -1,6 +1,6 @@
 image:
   repository: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb
-  tag: 23ac8e6
+  tag: f6c3b52
   pullPolicy: Always
 
 replicaCount: 1
@@ -16,12 +16,13 @@ resources:
     memory: 900Mi
   limits:
     cpu: 1000m
-    memory: 1200Mi
+    memory: 1800Mi
 
 env:
   LOG_FORMAT: json
   LOG_LEVEL: info
   RATE_LIMIT: "100/minute"
+  GUNICORN_WORKERS: "2"
   REDIS_HOST: redis
   REDIS_PORT: "6379"
   # OTLP_ENDPOINT intentionally unset — otel-collector not deployed yet.
@@ -55,7 +56,7 @@ secretName: nyc-airbnb-secrets
 frontend:
   image:
     repository: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend
-    tag: 23ac8e6
+    tag: f6c3b52
 
 
 

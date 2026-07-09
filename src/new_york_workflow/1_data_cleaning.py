@@ -34,6 +34,7 @@ KEEP_FEATURES = [
     'bedrooms',
     'host_is_superhost',
     'host_listings_count',
+    'instant_bookable',                # t/f — instantly bookable listings command a premium
     'latitude',
     'longitude',
     'minimum_minimum_nights',
@@ -101,6 +102,10 @@ def encode_categorical(df):
     if 'host_is_superhost' in df.columns:
         df['host_is_superhost'] = (df['host_is_superhost'] == 't').astype(int)
         logger.info(f"   ✓ host_is_superhost: encoded to 0/1")
+
+    if 'instant_bookable' in df.columns:
+        df['instant_bookable'] = (df['instant_bookable'] == 't').astype(int)
+        logger.info(f"   ✓ instant_bookable: encoded to 0/1 ({int(df['instant_bookable'].sum()):,} instant)")
 
     # Keep neighbourhood columns as strings — encoded in feature engineering step
     for col in ['neighbourhood_group_cleansed', 'neighbourhood_cleansed']:

@@ -42,7 +42,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal, Optional, List
 
-from fastapi import FastAPI, HTTPException, Request, Response, Header, Depends
+from fastapi import FastAPI, HTTPException, Request, Response, Header, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -341,6 +341,7 @@ class PredictionResponse(BaseModel):
     request_id:              str
     cache_hit:               bool
     business_rules_applied:  Optional[list] = None
+    top_features:            Optional[list] = None  # SHAP explanation (opt-in via ?explain=true)
 
 
 class BatchPredictionResponse(BaseModel):
@@ -620,7 +621,8 @@ def acknowledge_all_alerts():
 
 @app.post("/predict", response_model=PredictionResponse)
 @limiter.limit(settings.rate_limit)
-def predict(listing: ListingFeatures, request: Request):
+def predict(listing: ListingFeatures, request: Request,
+            explain: bool = Query(False, description="Include SHAP top-5 feature contributions")):
     """
     Predict nightly price. Checks Redis cache first; runs ONNX inference on miss.
     Full request payload is logged to SQLite for retraining. 5xx pushes to DLQ.
@@ -643,12 +645,19 @@ def predict(listing: ListingFeatures, request: Request):
             store.log_prediction(request_id, raw, cached, cache_hit=True, listing_id=listing_id)
             metrics.record_prediction_full(cached["price_usd"], arm="champion", cache_hit=True)
             logger.info("predict | rid=%s CACHE HIT %s → %s", request_id[:8], listing.borough, cached["price_str"])
+            top_features = None
+            if explain:
+                try:
+                    top_features = predictor.explain_raw(raw, cached["price_usd"])
+                except Exception as exc:
+                    logger.warning("SHAP explain failed (cache hit) rid=%s: %s", request_id[:8], exc)
             return PredictionResponse(
                 **cached,
-                model      = "XGBoost (ONNX Runtime)",
-                r2_test    = _r2_test,
-                request_id = request_id,
-                cache_hit  = True,
+                model         = "XGBoost (ONNX Runtime)",
+                r2_test       = _r2_test,
+                request_id    = request_id,
+                cache_hit     = True,
+                top_features  = top_features,
             )
 
         # ── 2. ONNX inference ─────────────────────────────────────────────
@@ -740,6 +749,13 @@ def predict(listing: ListingFeatures, request: Request):
 
         _guard_price(result["price_usd"], request_id)
 
+        top_features = None
+        if explain:
+            try:
+                top_features = predictor.explain_raw(raw, result["price_usd"])
+            except Exception as exc:
+                logger.warning("SHAP explain failed rid=%s: %s", request_id[:8], exc)
+
         span.set_attribute("cache.hit",            False)
         span.set_attribute("prediction.price_usd", result["price_usd"])
         span.set_attribute("shadow.active",        shadow.active)
@@ -752,10 +768,11 @@ def predict(listing: ListingFeatures, request: Request):
 
         return PredictionResponse(
             **result,
-            model      = "XGBoost (ONNX Runtime)",
-            r2_test    = _r2_test,
-            request_id = request_id,
-            cache_hit  = False,
+            model         = "XGBoost (ONNX Runtime)",
+            r2_test       = _r2_test,
+            request_id    = request_id,
+            cache_hit     = False,
+            top_features  = top_features,
         )
 
 

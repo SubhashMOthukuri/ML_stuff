@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Zap } from 'lucide-react'
 
 const ROOM_TYPES = ['Entire home/apt', 'Private room']
 
@@ -17,6 +17,15 @@ const BOROUGH_NEIGHBOURHOODS = {
   Bronx:         ['Fordham', 'Mott Haven', 'Riverdale', 'Pelham Bay', 'Tremont', 'Belmont'],
   'Staten Island': ['St. George', 'Stapleton', 'Tottenville', 'Great Kills', 'Arrochar'],
 }
+
+const AMENITIES = [
+  { key: 'has_air_conditioning', label: 'Air conditioning', emoji: '❄️' },
+  { key: 'has_washer',           label: 'Washer',           emoji: '🫧' },
+  { key: 'has_dryer',            label: 'Dryer',            emoji: '♨️' },
+  { key: 'has_elevator',         label: 'Elevator',         emoji: '🛗' },
+  { key: 'has_gym',              label: 'Gym',              emoji: '🏋️' },
+  { key: 'has_pool',             label: 'Pool',             emoji: '🏊' },
+]
 
 // ── atoms ─────────────────────────────────────────────────────────────────────
 
@@ -73,11 +82,29 @@ function Slider({ value, onChange, min, max, step = 1, format }) {
   )
 }
 
+function AmenityChip({ amenity, checked, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(amenity.key)}
+      className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border text-sm font-medium
+                  transition-all select-none
+                  ${checked
+                    ? 'bg-sky-50 border-sky-400 text-sky-700'
+                    : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'}`}
+    >
+      <span className="text-base leading-none">{amenity.emoji}</span>
+      {amenity.label}
+    </button>
+  )
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 export default function ListingForm({ form, onChange, onSubmit, loading }) {
   const neighbourhoods = BOROUGH_NEIGHBOURHOODS[form.borough] ?? []
   const set = (key, val) => onChange({ ...form, [key]: val })
+  const toggleAmenity = key => set(key, !form[key])
 
   return (
     <form onSubmit={e => { e.preventDefault(); onSubmit() }}
@@ -157,6 +184,42 @@ export default function ListingForm({ form, onChange, onSubmit, loading }) {
             />
           </div>
         </div>
+      </div>
+
+      {/* ── Amenities ── */}
+      <div className="px-6 py-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Amenities</p>
+          <span className="text-xs text-slate-400">affects pricing</span>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {AMENITIES.map(am => (
+            <AmenityChip
+              key={am.key}
+              amenity={am}
+              checked={!!form[am.key]}
+              onToggle={toggleAmenity}
+            />
+          ))}
+        </div>
+
+        {/* Instant bookable toggle */}
+        <button
+          type="button"
+          onClick={() => set('instant_bookable', !form.instant_bookable)}
+          className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border
+                      text-sm font-medium transition-all
+                      ${form.instant_bookable
+                        ? 'bg-sky-50 border-sky-400 text-sky-700'
+                        : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'}`}
+        >
+          <div className="flex items-center gap-2">
+            <Zap size={15} className={form.instant_bookable ? 'text-sky-500' : 'text-slate-400'} />
+            <span>Instant bookable</span>
+          </div>
+          <span className="text-xs font-normal opacity-70">guests can book without host approval</span>
+        </button>
       </div>
 
       {/* ── Reviews ── */}
