@@ -114,7 +114,7 @@ jobs:
           aws-region:            us-east-2
 
       - name: Install dependencies
-        run: pip install --no-cache-dir -r requirements.txt
+        run: pip install --no-cache-dir -r requirements-dev.txt
 
       - name: Download current champion model + baseline from S3
         run: aws s3 sync s3://nyc-airbnb-models-698172256228/nyc/ models/nyc/
