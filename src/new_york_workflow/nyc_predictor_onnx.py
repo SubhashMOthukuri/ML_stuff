@@ -213,8 +213,16 @@ class NYCAirbnbPredictorONNX:
         explainer   = self._get_shap_explainer()
         shap_values = explainer.shap_values(X_scaled)[0]  # shape: (n_features,)
 
+        # Features that are internally derived (not user-controllable) are excluded
+        # from the explanation so users only see factors they can act on.
+        _HIDDEN = {"is_private_bath", "minimum_nights_avg_ntm", "log_minimum_nights_avg_ntm",
+                   "minimum_minimum_nights", "days_to_checkin", "is_peak_season",
+                   "is_weekend", "month", "day_of_week"}
+
         contributions = []
         for feat, sv in zip(self.feature_list, shap_values):
+            if feat in _HIDDEN:
+                continue
             dollar = round(float(sv) * price_usd, 2)
             contributions.append({
                 "feature":          feat,
