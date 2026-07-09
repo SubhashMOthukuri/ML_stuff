@@ -3,7 +3,7 @@
 import sys
 from unittest.mock import MagicMock
 
-from src.new_york_workflow.nyc_store import RequestStore
+from src.serving.store import RequestStore
 
 PG_DSN = "postgresql://nyc_app:test-secret-pw@nyc-rds.abc.us-east-2.rds.amazonaws.com:5432/nyc"
 _TEST_PW = "test-secret-pw"

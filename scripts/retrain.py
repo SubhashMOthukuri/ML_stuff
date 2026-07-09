@@ -56,7 +56,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from src.new_york_workflow.nyc_data_validator import (
+from src.training.data_validator import (
     validate_raw_snapshot,
     validate_clean_listings,
     validate_engineered_features,
@@ -288,8 +288,8 @@ def clean_and_engineer(raw_path: Path) -> pd.DataFrame:
     Returns:
         Engineered DataFrame with the same column set as engineered_features.csv.
     """
-    c = _load_module("cleaning",     "src/new_york_workflow/pipeline/1_data_cleaning.py")
-    e = _load_module("engineering",  "src/new_york_workflow/pipeline/2_feature_engineering.py")
+    c = _load_module("cleaning",     "src/training/cleaning.py")
+    e = _load_module("engineering",  "src/training/features.py")
 
     # ── Step 1: clean ─────────────────────────────────────────────────────────
     logger.info("=== CLEANING  %s ===", raw_path.name)
@@ -1007,7 +1007,7 @@ def main(
 
         try:
             sys.path.insert(0, str(BASE_DIR))
-            from src.new_york_workflow.nyc_alerts import alerts
+            from src.serving.alerts import alerts
             alerts.push(
                 alert_type="retraining_gate_failed",
                 message=f"Retraining gate failed: {'; '.join(reasons)}",

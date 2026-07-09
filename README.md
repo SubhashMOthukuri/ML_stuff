@@ -41,7 +41,7 @@ Slack webhooks (drift/alert delivery)
 ```bash
 pip install -r requirements.txt
 cp .env.example .env          # edit REDIS_HOST, MLFLOW_TRACKING_URI as needed
-uvicorn src.new_york_workflow.nyc_api:app --reload --port 8001
+uvicorn src.serving.api:app --reload --port 8001
 ```
 
 ### Full stack (Redis + MLflow + API + Nginx)
@@ -124,23 +124,25 @@ curl -X POST http://localhost:8001/v1/predict \
 ## Repo Layout
 
 ```
-src/new_york_workflow/
-  1_data_cleaning.py         # InsideAirbnb CSV → cleaned DataFrame
-  2_feature_engineering.py   # feature construction (58 features)
-  3_train_model.py           # Ridge / RF / XGBoost benchmark + hyperparameter search
-  nyc_api.py                 # FastAPI serving layer (all endpoints)
-  nyc_predictor_onnx.py      # ONNX inference + SHAP explanations
-  nyc_cache.py               # Redis prediction cache
-  nyc_store.py               # SQLite request store (append-only)
-  nyc_batch.py               # async batch job queue (Redis BRPOP)
-  nyc_shadow.py              # shadow deployment logic
-  nyc_ab.py                  # A/B test lifecycle
-  nyc_canary.py              # canary rollout
-  nyc_drift.py               # PSI-based drift detection
-  nyc_dlq.py                 # dead letter queue
-  nyc_alerts.py              # alert store + Slack delivery
-  nyc_ground_truth.py        # ground truth store + MAE tracking
-  nyc_data_validator.py      # data quality checks for retrain pipeline
+src/serving/
+  api.py                     # FastAPI serving layer (all endpoints)
+  predictor.py               # ONNX inference + SHAP explanations
+  cache.py                   # Redis prediction cache
+  store.py                   # SQLite request store (append-only)
+  batch.py                   # async batch job queue (Redis BRPOP)
+  shadow.py                  # shadow deployment logic
+  ab.py                      # A/B test lifecycle
+  canary.py                  # canary rollout
+  drift.py                   # PSI-based drift detection
+  dlq.py                     # dead letter queue
+  alerts.py                  # alert store + Slack delivery
+  ground_truth.py            # ground truth store + MAE tracking
+
+src/training/
+  cleaning.py                # InsideAirbnb CSV → cleaned DataFrame
+  features.py                # feature construction (58 features)
+  train.py                   # Ridge / RF / XGBoost benchmark + hyperparameter search
+  data_validator.py          # data quality checks for retrain pipeline
 
 scripts/
   retrain.py                 # full retrain pipeline: download → clean → train → gate → ONNX

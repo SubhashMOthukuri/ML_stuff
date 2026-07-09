@@ -11,10 +11,10 @@ Stack:
   - CORS                     (React frontend on :5173)
 
 Run locally:
-  PYTHONPATH=. python -m uvicorn src.new_york_workflow.nyc_api:app --port 8001 --reload
+  PYTHONPATH=. python -m uvicorn src.serving.api:app --port 8001 --reload
 
 Run production:
-  PYTHONPATH=. gunicorn -c gunicorn.conf.py src.new_york_workflow.nyc_api:app
+  PYTHONPATH=. gunicorn -c gunicorn.conf.py src.serving.api:app
 
 Environment variables:
   RATE_LIMIT          requests per minute per IP   (default: 60/minute)
@@ -65,17 +65,17 @@ from src.core.metrics import (
     prom_active_alerts,
     prom_dlq_size,
 )
-from src.new_york_workflow.nyc_predictor_onnx import NYCAirbnbPredictorONNX
-from src.new_york_workflow.nyc_cache import PredictionCache
-from src.new_york_workflow.nyc_store import RequestStore
-from src.new_york_workflow.nyc_dlq import DeadLetterQueue
-from src.new_york_workflow.nyc_drift import DriftMonitor
-from src.new_york_workflow.nyc_alerts import alerts as alert_store
-from src.new_york_workflow.nyc_shadow import ShadowPredictor
-from src.new_york_workflow.nyc_ground_truth import GroundTruthStore
-from src.new_york_workflow.nyc_ab import ABTest
-from src.new_york_workflow.nyc_canary import CanaryDeployment
-from src.new_york_workflow.nyc_batch import BatchJobStore, BatchWorker, MAX_BATCH_SIZE
+from src.serving.predictor import NYCAirbnbPredictorONNX
+from src.serving.cache import PredictionCache
+from src.serving.store import RequestStore
+from src.serving.dlq import DeadLetterQueue
+from src.serving.drift import DriftMonitor
+from src.serving.alerts import alerts as alert_store
+from src.serving.shadow import ShadowPredictor
+from src.serving.ground_truth import GroundTruthStore
+from src.serving.ab import ABTest
+from src.serving.canary import CanaryDeployment
+from src.serving.batch import BatchJobStore, BatchWorker, MAX_BATCH_SIZE
 from scripts.fetch_ground_truth import run as run_ground_truth_ingest, INSIDEAIRBNB_URL
 
 setup_logging()
@@ -1046,4 +1046,4 @@ app.include_router(v1_router)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.new_york_workflow.nyc_api:app", host="0.0.0.0", port=8001, reload=False, log_config=None)
+    uvicorn.run("src.serving.api:app", host="0.0.0.0", port=8001, reload=False, log_config=None)

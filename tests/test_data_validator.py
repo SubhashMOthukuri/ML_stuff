@@ -18,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.new_york_workflow.nyc_data_validator import (
+from src.training.data_validator import (
     DataQualityError,
     DataQualityReport,
     BOROUGHS,
@@ -396,7 +396,7 @@ class TestBaseline:
         # Validate data where median is $300 — >25% drift → warning
         import unittest.mock as mock
         with mock.patch(
-            "src.new_york_workflow.nyc_data_validator.BASELINE_PATH", path
+            "src.training.data_validator.BASELINE_PATH", path
         ):
             report = validate_clean_listings(_clean_df(price=300.0))
 
@@ -406,7 +406,7 @@ class TestBaseline:
         import unittest.mock as mock
         nonexistent = tmp_path / "no_baseline.json"
         with mock.patch(
-            "src.new_york_workflow.nyc_data_validator.BASELINE_PATH", nonexistent
+            "src.training.data_validator.BASELINE_PATH", nonexistent
         ):
             report = validate_clean_listings(_clean_df())
 

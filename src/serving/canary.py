@@ -497,7 +497,7 @@ class CanaryDeployment:
         # Push alert via nyc_alerts so it surfaces at GET /alerts
         try:
             sys.path.insert(0, str(BASE_DIR))
-            from src.new_york_workflow.nyc_alerts import alerts
+            from src.serving.alerts import alerts
             alerts.push_once(
                 alert_type = "post_promotion_revert",
                 message    = (

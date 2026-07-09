@@ -14,7 +14,7 @@ PSI (Population Stability Index):
   > 0.20  major drift     (alert → consider retraining)
 
 Usage:
-    from src.new_york_workflow.nyc_drift import DriftMonitor
+    from src.serving.drift import DriftMonitor
     monitor = DriftMonitor()
     report  = monitor.check()
     # report.status in ('ok', 'warning', 'critical')

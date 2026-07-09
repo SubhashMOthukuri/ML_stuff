@@ -164,7 +164,7 @@ async def main():
             store_rows_before = h["store_rows"]
         except Exception as exc:
             print(f"  ✗ API not reachable: {exc}")
-            print("    Start the API first: PYTHONPATH=. uvicorn src.new_york_workflow.nyc_api:app --port 8001")
+            print("    Start the API first: PYTHONPATH=. uvicorn src.serving.api:app --port 8001")
             sys.exit(1)
 
     # ── DLQ injection ─────────────────────────────────────────────────────

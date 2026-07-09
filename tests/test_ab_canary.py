@@ -2,7 +2,7 @@
 Production-level tests for A/B testing and canary deployment.
 
 Coverage:
-  ABTest (nyc_ab.py)
+  ABTest (ab.py)
     - Routing: determinism, distribution accuracy, inactive guard
     - Lifecycle: start, stop, promote, reject, restart, double-start guard
     - log_prediction: writes when active, no-op when stopped (bug fix verified),
@@ -11,7 +11,7 @@ Coverage:
              recommendations, per-arm counts and accuracy via GT join
     - State persistence across instance restarts
 
-  CanaryDeployment (nyc_canary.py)
+  CanaryDeployment (canary.py)
     - Routing: determinism, distribution at 1% / 25%, inactive guard
     - Lifecycle: start (with/without challenger.onnx), advance through all stages,
                  manual advance, rollback, abort, double-start guard
@@ -22,13 +22,13 @@ Coverage:
     - Status: shape, history entries
     - State persistence across instance restarts
 
-  ShadowPredictor.predict_sync (nyc_shadow.py)
+  ShadowPredictor.predict_sync (shadow.py)
     - Returns None when shadow inactive
     - Returns correct dict shape when active (mocked session)
     - Returns None on inference exception (fallback path)
     - Price formatting is correct
 
-  API endpoints (nyc_api.py)
+  API endpoints (api.py)
     - /ab/start: 400 without challenger, 400 if already active
     - /ab/stats: idle shape, no-test message
     - /ab/stop: 400 when not active
@@ -54,8 +54,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.new_york_workflow.nyc_ab import ABTest, MIN_GT_SAMPLES, PROMOTE_DELTA, REJECT_DELTA
-from src.new_york_workflow.nyc_canary import (
+from src.serving.ab import ABTest, MIN_GT_SAMPLES, PROMOTE_DELTA, REJECT_DELTA
+from src.serving.canary import (
     CanaryDeployment,
     HealthResult,
     STAGES,
@@ -79,7 +79,7 @@ def ab(tmp_path):
     Also initialises GroundTruthStore against the same DB so the ground_truth
     table exists — required for stats() to run its JOIN without error.
     """
-    from src.new_york_workflow.nyc_ground_truth import GroundTruthStore
+    from src.serving.ground_truth import GroundTruthStore
     db = tmp_path / "predictions.db"
     GroundTruthStore(db_path=db)   # creates ground_truth table in the shared DB
     return ABTest(db_path=db, state_path=tmp_path / "ab_state.json")
@@ -98,7 +98,7 @@ def canary_mod(monkeypatch, tmp_path):
     Patches all module-level path constants in nyc_canary before any instance
     is created. Returns the patched module so tests can call CanaryDeployment().
     """
-    import src.new_york_workflow.nyc_canary as mod
+    import src.serving.canary as mod
 
     monkeypatch.setattr(mod, "STATE_PATH",        tmp_path / "canary_state.json")
     monkeypatch.setattr(mod, "HEALTH_DB",         tmp_path / "canary_health.db")
@@ -336,7 +336,7 @@ def _seed_ab_gt(tmp_path, champion_mae_error: float, challenger_mae_error: float
     champion_mae_error / challenger_mae_error are the per-listing abs errors.
     Returns (ab, ground_truth_store).
     """
-    from src.new_york_workflow.nyc_ground_truth import GroundTruthStore
+    from src.serving.ground_truth import GroundTruthStore
 
     db    = tmp_path / "predictions.db"
     state = tmp_path / "ab_state.json"
@@ -790,7 +790,7 @@ def _make_shadow_with_mock_session(log_price: float = 4.6):
     Build a ShadowPredictor instance with all ONNX plumbing replaced by mocks.
     Avoids needing real model files. Returns (shadow, mock_champion).
     """
-    from src.new_york_workflow.nyc_shadow import ShadowPredictor
+    from src.serving.shadow import ShadowPredictor
 
     shadow = ShadowPredictor.__new__(ShadowPredictor)
     shadow._session_lock = threading.Lock()
@@ -815,7 +815,7 @@ def _make_shadow_with_mock_session(log_price: float = 4.6):
 class TestShadowPredictSync:
 
     def test_returns_none_when_session_is_none(self):
-        from src.new_york_workflow.nyc_shadow import ShadowPredictor
+        from src.serving.shadow import ShadowPredictor
         s = ShadowPredictor.__new__(ShadowPredictor)
         s._session_lock = threading.Lock()
         s._session      = None
@@ -823,7 +823,7 @@ class TestShadowPredictSync:
         assert s.predict_sync({}) is None
 
     def test_returns_none_when_champion_is_none(self):
-        from src.new_york_workflow.nyc_shadow import ShadowPredictor
+        from src.serving.shadow import ShadowPredictor
         s = ShadowPredictor.__new__(ShadowPredictor)
         s._session_lock = threading.Lock()
         s._session      = MagicMock()
@@ -1032,8 +1032,8 @@ class TestPostPromotionMonitor:
         # Feed spiked requests — 50% error_rate >> 0.02 * 3 = 0.06 threshold
         for i in range(POST_PROMOTION_MIN_SAMPLES):
             c.record_post_promotion(30.0, success=(i % 2 == 0))
-        # Suppress alert push (nyc_alerts not wired in unit context)
-        with patch("src.new_york_workflow.nyc_canary.CanaryDeployment._revert_to_previous",
+        # Suppress alert push (alerts not wired in unit context)
+        with patch("src.serving.canary.CanaryDeployment._revert_to_previous",
                    wraps=c._revert_to_previous) as spy:
             c._tick_post_promotion()
         assert c._state.get("post_promotion_reverted") is True

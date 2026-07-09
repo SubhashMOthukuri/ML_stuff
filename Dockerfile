@@ -92,4 +92,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-CMD ["gunicorn", "-c", "gunicorn.conf.py", "src.new_york_workflow.nyc_api:app"]
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "src.serving.api:app"]

@@ -812,7 +812,7 @@ class TestGroundTruthIngest:
 
     def test_accepts_correct_token_and_returns_ingest_result(self, client, monkeypatch):
         import src.config as cfg
-        from src.new_york_workflow import nyc_api
+        from src.serving import api as nyc_api
         monkeypatch.setattr(cfg.settings, "ground_truth_ingest_token", "test-secret")
         monkeypatch.setattr(
             nyc_api, "run_ground_truth_ingest",
@@ -825,7 +825,7 @@ class TestGroundTruthIngest:
     def test_ingest_exception_returns_500(self, client, monkeypatch):
         import src.config as cfg
         monkeypatch.setattr(cfg.settings, "ground_truth_ingest_token", "test-secret")
-        from src.new_york_workflow import nyc_api
+        from src.serving import api as nyc_api
 
         def boom(url, dry_run):
             raise RuntimeError("snapshot download failed")
@@ -841,7 +841,7 @@ class TestGroundTruthIngest:
 
 class TestAPIKeyAuth:
     def test_predict_without_key_returns_401(self, valid_listing):
-        from src.new_york_workflow.nyc_api import app
+        from src.serving.api import app
         from fastapi.testclient import TestClient as TC
         # Fresh client with NO default headers — no key passed
         with TC(app) as c:
@@ -849,14 +849,14 @@ class TestAPIKeyAuth:
         assert r.status_code == 401
 
     def test_predict_with_wrong_key_returns_401(self, valid_listing):
-        from src.new_york_workflow.nyc_api import app
+        from src.serving.api import app
         from fastapi.testclient import TestClient as TC
         with TC(app, headers={"X-API-Key": "completely-wrong"}) as c:
             r = c.post("/v1/predict", json=valid_listing)
         assert r.status_code == 401
 
     def test_health_exempt_from_auth(self):
-        from src.new_york_workflow.nyc_api import app
+        from src.serving.api import app
         from fastapi.testclient import TestClient as TC
         with TC(app) as c:
             for path in ("/health", "/health/ready", "/health/live"):
@@ -864,14 +864,14 @@ class TestAPIKeyAuth:
                 assert r.status_code != 401, f"{path} should be exempt from auth"
 
     def test_root_exempt_from_auth(self):
-        from src.new_york_workflow.nyc_api import app
+        from src.serving.api import app
         from fastapi.testclient import TestClient as TC
         with TC(app) as c:
             r = c.get("/")
         assert r.status_code == 200
 
     def test_docs_exempt_from_auth(self):
-        from src.new_york_workflow.nyc_api import app
+        from src.serving.api import app
         from fastapi.testclient import TestClient as TC
         with TC(app) as c:
             r = c.get("/docs")
@@ -883,7 +883,7 @@ class TestAPIKeyAuth:
         assert r.status_code == 200
 
     def test_auth_disabled_when_valid_api_keys_empty(self, valid_listing, monkeypatch):
-        from src.new_york_workflow import nyc_api
+        from src.serving import api as nyc_api
         from src.core.config import settings
         monkeypatch.setattr(settings, "valid_api_keys", "")
         from fastapi.testclient import TestClient as TC
@@ -895,7 +895,7 @@ class TestAPIKeyAuth:
 class TestSlackAlerts:
     def test_slack_not_called_when_no_webhook(self, tmp_path, monkeypatch):
         from unittest.mock import patch
-        from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.serving.alerts import AlertStore
         from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "")
@@ -905,7 +905,7 @@ class TestSlackAlerts:
 
     def test_slack_not_called_for_info_severity(self, tmp_path, monkeypatch):
         from unittest.mock import patch
-        from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.serving.alerts import AlertStore
         from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
@@ -915,7 +915,7 @@ class TestSlackAlerts:
 
     def test_slack_called_for_warning(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
-        from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.serving.alerts import AlertStore
         from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
@@ -930,7 +930,7 @@ class TestSlackAlerts:
 
     def test_slack_called_for_critical(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
-        from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.serving.alerts import AlertStore
         from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
@@ -945,7 +945,7 @@ class TestSlackAlerts:
 
     def test_slack_critical_channel_override(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
-        from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.serving.alerts import AlertStore
         from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
@@ -959,7 +959,7 @@ class TestSlackAlerts:
 
     def test_slack_failure_does_not_raise(self, tmp_path, monkeypatch):
         from unittest.mock import patch
-        from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.serving.alerts import AlertStore
         from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
@@ -969,7 +969,7 @@ class TestSlackAlerts:
 
     def test_push_once_dedup_still_works_with_slack(self, tmp_path, monkeypatch):
         from unittest.mock import patch, MagicMock
-        from src.new_york_workflow.nyc_alerts import AlertStore
+        from src.serving.alerts import AlertStore
         from src.core.config import settings
         store = AlertStore(tmp_path / "alerts.json")
         monkeypatch.setattr(settings, "slack_webhook_url", "https://hooks.slack.com/fake")
@@ -1032,12 +1032,12 @@ class TestPriceSanityGuard:
         assert 10.0 <= price <= 5000.0
 
     def test_price_sanity_guard_imported(self):
-        from src.new_york_workflow.nyc_api import _PRICE_MIN_USD, _PRICE_MAX_USD, _guard_price
+        from src.serving.api import _PRICE_MIN_USD, _PRICE_MAX_USD, _guard_price
         assert _PRICE_MIN_USD == 10.0
         assert _PRICE_MAX_USD == 5_000.0
 
     def test_guard_raises_on_zero_price(self):
-        from src.new_york_workflow.nyc_api import _guard_price
+        from src.serving.api import _guard_price
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as exc:
             _guard_price(0.0, "test-rid-001")
@@ -1045,14 +1045,14 @@ class TestPriceSanityGuard:
         assert "outside valid range" in exc.value.detail
 
     def test_guard_raises_on_negative_price(self):
-        from src.new_york_workflow.nyc_api import _guard_price
+        from src.serving.api import _guard_price
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as exc:
             _guard_price(-50.0, "test-rid-002")
         assert exc.value.status_code == 422
 
     def test_guard_raises_on_excessive_price(self):
-        from src.new_york_workflow.nyc_api import _guard_price
+        from src.serving.api import _guard_price
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as exc:
             _guard_price(99_999.0, "test-rid-003")
@@ -1060,9 +1060,9 @@ class TestPriceSanityGuard:
         assert "outside valid range" in exc.value.detail
 
     def test_guard_passes_on_boundary_minimum(self):
-        from src.new_york_workflow.nyc_api import _guard_price
+        from src.serving.api import _guard_price
         _guard_price(10.0, "test-rid-004")   # must not raise
 
     def test_guard_passes_on_boundary_maximum(self):
-        from src.new_york_workflow.nyc_api import _guard_price
+        from src.serving.api import _guard_price
         _guard_price(5000.0, "test-rid-005")  # must not raise

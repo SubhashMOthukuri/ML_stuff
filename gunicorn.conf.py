@@ -2,7 +2,7 @@
 Gunicorn configuration for NYC Airbnb Price Prediction API.
 
 Usage:
-    PYTHONPATH=. gunicorn -c gunicorn.conf.py src.new_york_workflow.nyc_api:app
+    PYTHONPATH=. gunicorn -c gunicorn.conf.py src.serving.api:app
 
 Scale:
     workers = (2 × CPU_count) + 1  is the standard formula.

@@ -15,7 +15,7 @@ Distribution checks compare current stats against a saved baseline JSON
 structural checks run; call save_baseline() after a known-good run.
 
 Usage:
-    from src.new_york_workflow.nyc_data_validator import (
+    from src.training.data_validator import (
         validate_raw_snapshot, validate_clean_listings,
         validate_engineered_features, save_baseline,
     )

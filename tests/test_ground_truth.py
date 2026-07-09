@@ -39,8 +39,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.new_york_workflow.nyc_ground_truth import GroundTruthStore
-from src.new_york_workflow.nyc_store import RequestStore
+from src.serving.ground_truth import GroundTruthStore
+from src.serving.store import RequestStore
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -352,7 +352,7 @@ class TestFetchGroundTruthRun:
 
     @pytest.fixture(autouse=True)
     def _bypass_raw_validation(self, monkeypatch):
-        from src.new_york_workflow.nyc_data_validator import DataQualityReport
+        from src.training.data_validator import DataQualityReport
         passing = DataQualityReport(stage="raw_snapshot", passed=True, row_count=99_999)
         monkeypatch.setattr(
             "scripts.fetch_ground_truth.validate_raw_snapshot",

@@ -66,12 +66,12 @@ def client():
     When absent (CI), patches NYCAirbnbPredictorONNX with a stub so the full
     API stack (routing, auth, cache, business rules) is still exercised.
     """
-    from src.new_york_workflow.nyc_api import app
+    from src.serving.api import app
 
     if not _MODEL_FILE.exists():
         from unittest.mock import patch
         stub = _make_stub_predictor()
-        with patch("src.new_york_workflow.nyc_api.NYCAirbnbPredictorONNX", return_value=stub):
+        with patch("src.serving.api.NYCAirbnbPredictorONNX", return_value=stub):
             with TestClient(app, headers={"X-API-Key": _TEST_API_KEY}) as c:
                 yield c
     else:

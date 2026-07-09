@@ -13,11 +13,11 @@ on:
   push:
     branches: [main]
     paths:
-      - "src/new_york_workflow/nyc_api.py"
-      - "src/new_york_workflow/nyc_canary.py"
-      - "src/new_york_workflow/nyc_ab.py"
-      - "src/new_york_workflow/nyc_shadow.py"
-      - "src/new_york_workflow/nyc_predictor_onnx.py"
+      - "src/serving/api.py"
+      - "src/serving/canary.py"
+      - "src/serving/ab.py"
+      - "src/serving/shadow.py"
+      - "src/serving/predictor.py"
       - "src/metrics.py"
       - "scripts/retrain.py"
       - "requirements.txt"
@@ -79,7 +79,7 @@ jobs:
       # /health/live endpoint returns 200 (up to 30 s before failing).
       - name: Start API server
         run: |
-          uvicorn src.new_york_workflow.nyc_api:app \
+          uvicorn src.serving.api:app \
             --host 0.0.0.0 --port 8001 --workers 4 &
           echo "Waiting for API to become healthy…"
           for i in $(seq 1 30); do

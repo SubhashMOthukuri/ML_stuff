@@ -22,12 +22,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 # ── load 2_feature_engineering.py via importlib (name starts with digit) ──────
-_FE_PATH = ROOT / "src" / "new_york_workflow" / "2_feature_engineering.py"
+_FE_PATH = ROOT / "src" / "training" / "features.py"
 _fe_spec = importlib.util.spec_from_file_location("feature_engineering", _FE_PATH)
 fe = importlib.util.module_from_spec(_fe_spec)
 _fe_spec.loader.exec_module(fe)
 
-from src.new_york_workflow.nyc_predictor_onnx import NYCAirbnbPredictorONNX
+from src.serving.predictor import NYCAirbnbPredictorONNX
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -24,8 +24,8 @@ from pathlib import Path
 # Make src importable when run from repo root
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.new_york_workflow.nyc_drift import DriftMonitor
-from src.new_york_workflow.nyc_alerts import AlertStore
+from src.serving.drift import DriftMonitor
+from src.serving.alerts import AlertStore
 
 logging.basicConfig(
     level=logging.INFO,

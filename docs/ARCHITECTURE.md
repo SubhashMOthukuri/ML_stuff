@@ -31,16 +31,16 @@ Redis cache, A/B testing, drift detection, nightly retraining, and Kubernetes de
                     └───────────┬──────────┘
                                 │
               ┌─────────────────▼──────────────────┐
-              │   FastAPI (src/new_york_workflow/   │
-              │   nyc_api.py) — gunicorn 2 workers  │
+              │   FastAPI (src/serving/api.py)       │
+              │   gunicorn 2 workers                 │
               │   Port 8001                          │
               └──────┬──────────┬───────────────────┘
                      │          │
-          ┌──────────▼──┐  ┌────▼───────────────────────────────────┐
-          │ Redis 7      │  │ ONNX Runtime (nyc_predictor_onnx.py)  │
-          │ Cache + DLQ  │  │ XGBoost model, SHAP TreeExplainer      │
-          │ Batch queue  │  │ 58 features, log_price → expm1 → $$$   │
-          └──────────────┘  └────────────────────────────────────────┘
+          ┌──────────▼──┐  ┌────▼────────────────────────────────────┐
+          │ Redis 7      │  │ ONNX Runtime (src/serving/predictor.py) │
+          │ Cache + DLQ  │  │ XGBoost model, SHAP TreeExplainer       │
+          │ Batch queue  │  │ 58 features, log_price → expm1 → $$$    │
+          └──────────────┘  └─────────────────────────────────────────┘
                      │
           ┌──────────▼──────────────────────┐
           │ Postgres / SQLite               │
@@ -54,33 +54,35 @@ Redis cache, A/B testing, drift detection, nightly retraining, and Kubernetes de
 
 ## Directory Guide
 
-### `src/new_york_workflow/`
+### `src/serving/`
 
-The core of the system. Two distinct concerns live here:
+Serving layer — imported by the API at runtime:
 
-**Serving layer** (imported by the API at runtime):
 | File | What it does |
 |------|-------------|
-| `nyc_api.py` | All FastAPI routes. /v1/predict, /v1/predict-batch, /health, /drift, /metrics, rollout endpoints |
-| `nyc_predictor_onnx.py` | ONNX Runtime inference + SHAP explanations. Holds the model in memory. |
-| `nyc_cache.py` | Redis prediction cache. MD5 key from input, 5-min TTL. ~40% hit rate in prod. |
-| `nyc_store.py` | Append-only SQLite/Postgres request log. Feeds retraining pipeline. |
-| `nyc_batch.py` | Async batch jobs. Redis BRPOP queue, daemon worker thread, per-job TTL 1h. |
-| `nyc_drift.py` | PSI-based drift detection vs baseline_stats.json. Called by `/drift` and nightly CI. |
-| `nyc_shadow.py` | Shadow deployment. Runs challenger alongside champion, logs comparison. |
-| `nyc_ab.py` | A/B test lifecycle. Traffic split, winner selection, promotion. |
-| `nyc_canary.py` | Canary rollout. Gradual traffic shift with health-gate rollback. |
-| `nyc_ground_truth.py` | Join predictions vs actual InsideAirbnb prices. Live MAE tracking. |
-| `nyc_dlq.py` | Dead letter queue. 5xx failures pushed to Redis list for retry/inspection. |
-| `nyc_alerts.py` | Alert store + Slack webhook delivery. warning/critical severity. |
-| `nyc_data_validator.py` | Schema + distribution checks run before each retrain. |
+| `api.py` | All FastAPI routes. /v1/predict, /v1/predict-batch, /health, /drift, /metrics, rollout endpoints |
+| `predictor.py` | ONNX Runtime inference + SHAP explanations. Holds the model in memory. |
+| `cache.py` | Redis prediction cache. MD5 key from input, 5-min TTL. ~40% hit rate in prod. |
+| `store.py` | Append-only SQLite/Postgres request log. Feeds retraining pipeline. |
+| `batch.py` | Async batch jobs. Redis BRPOP queue, daemon worker thread, per-job TTL 1h. |
+| `drift.py` | PSI-based drift detection vs baseline_stats.json. Called by `/drift` and nightly CI. |
+| `shadow.py` | Shadow deployment. Runs challenger alongside champion, logs comparison. |
+| `ab.py` | A/B test lifecycle. Traffic split, winner selection, promotion. |
+| `canary.py` | Canary rollout. Gradual traffic shift with health-gate rollback. |
+| `ground_truth.py` | Join predictions vs actual InsideAirbnb prices. Live MAE tracking. |
+| `dlq.py` | Dead letter queue. 5xx failures pushed to Redis list for retry/inspection. |
+| `alerts.py` | Alert store + Slack webhook delivery. warning/critical severity. |
 
-**Training pipeline** (`pipeline/` subfolder, run by `scripts/retrain.py`):
+### `src/training/`
+
+Training pipeline — run by `scripts/retrain.py`:
+
 | File | What it does |
 |------|-------------|
-| `pipeline/1_data_cleaning.py` | Raw InsideAirbnb CSV → clean DataFrame. Drops nulls, parses price, encodes categoricals. |
-| `pipeline/2_feature_engineering.py` | Log transforms, borough dummies, polynomials, interaction terms, target encoding. |
-| `pipeline/3_train_model.py` | Ridge / RF / XGBoost benchmark + hyperparameter search. Saves models + training report. |
+| `data_validator.py` | Schema + distribution checks run before each retrain. |
+| `cleaning.py` | Raw InsideAirbnb CSV → clean DataFrame. Drops nulls, parses price, encodes categoricals. |
+| `features.py` | Log transforms, borough dummies, polynomials, interaction terms, target encoding. |
+| `train.py` | Ridge / RF / XGBoost benchmark + hyperparameter search. Saves models + training report. |
 
 ### `src/core/` — application infrastructure
 
@@ -89,7 +91,7 @@ These are singletons and registries shared across every module. They have no dom
 | File | What it does |
 |------|-------------|
 | `core/config.py` | Pydantic Settings — reads all env vars, typed defaults. Single source of truth for configuration. |
-| `core/metrics.py` | Prometheus counters/histograms. Imported by nyc_api.py and nyc_drift.py. |
+| `core/metrics.py` | Prometheus counters/histograms. Imported by serving/api.py and serving/drift.py. |
 | `core/logging.py` | structlog setup — JSON in prod, pretty-printed in dev. Call `setup_logging()` once at startup. |
 | `core/exceptions.py` | Custom exception types (`DataQualityError`, etc.) shared across modules. |
 
@@ -118,7 +120,7 @@ Stateless utilities with no app dependencies. Can be imported anywhere without c
 
 | Path | What it tests |
 |------|-------------|
-| `test_nyc_api.py` | Full API contract tests (131 tests). Auth, rate limit, cache, batch, SHAP, rollout endpoints. |
+| `test_nyc_api.py` (imports as `src.serving.api`) | Full API contract tests (131 tests). Auth, rate limit, cache, batch, SHAP, rollout endpoints. |
 | `test_ab_canary.py` | A/B test and canary state machine correctness. |
 | `test_data_validator.py` | Data quality check functions. |
 | `test_ground_truth.py` | Ground truth join + MAE calculation. |
@@ -219,7 +221,7 @@ Kafka would add a multi-broker cluster and schema registry for no practical gain
 
 ## Critical Invariants (do not break)
 
-1. **`app.include_router(v1_router)` must be the LAST statement in nyc_api.py** (before `if __name__`). FastAPI copies routes at include time — any `@v1_router.*` decorator after the `include_router` call is silently ignored, returning 404.
+1. **`app.include_router(v1_router)` must be the LAST statement in `src/serving/api.py`** (before `if __name__`). FastAPI copies routes at include time — any `@v1_router.*` decorator after the `include_router` call is silently ignored, returning 404.
 
 2. **`neighbourhood_price_rank` encoding is fitted on training data only.** Re-fitting on all data (train + test) leaks test distribution into the features and inflates R² artificially.
 
@@ -227,4 +229,4 @@ Kafka would add a multi-broker cluster and schema registry for no practical gain
 
 4. **Redis `allkeys-lru` + batch jobs**: LRU eviction can remove batch jobs under memory pressure. If this becomes a problem in production, move batch job keys to a separate Redis instance with `noeviction` policy. Do not disable `allkeys-lru` on the main instance — the prediction cache depends on it.
 
-5. **SHAP pre-warm runs at startup** (`lifespan()` in nyc_api.py). If removed, the first `/v1/predict?explain=true` request will time out (TreeExplainer init takes 2–4s on t3.small).
+5. **SHAP pre-warm runs at startup** (`lifespan()` in `src/serving/api.py`). If removed, the first `/v1/predict?explain=true` request will time out (TreeExplainer init takes 2–4s on t3.small).

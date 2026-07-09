@@ -37,10 +37,10 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE_DIR))
 
-from src.new_york_workflow.nyc_store import RequestStore
-from src.new_york_workflow.nyc_ground_truth import GroundTruthStore
-from src.new_york_workflow.nyc_alerts import alerts
-from src.new_york_workflow.nyc_data_validator import validate_raw_snapshot, DataQualityError
+from src.serving.store import RequestStore
+from src.serving.ground_truth import GroundTruthStore
+from src.serving.alerts import alerts
+from src.training.data_validator import validate_raw_snapshot, DataQualityError
 
 # Latest InsideAirbnb NYC listings snapshot (updated monthly)
 INSIDEAIRBNB_URL = (
