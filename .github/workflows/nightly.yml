@@ -19,9 +19,12 @@ env:
 
 jobs:
 
-  # ── Job 1: Drift check ───────────────────────────────────────────────────────
+  # ── Job 1: Drift check against live production API ───────────────────────────
+  # Calls GET /drift on the running cluster — drift runs against real prediction
+  # data in Postgres, not a CI-local empty SQLite file.
+  # Requires two secrets: PROD_API_URL and PROD_API_KEY.
   drift-check:
-    name: Drift Check
+    name: Drift Check (prod API)
     runs-on: ubuntu-latest
     outputs:
       drift_status: ${{ steps.check.outputs.drift_status }}
@@ -30,64 +33,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: pip install --no-cache-dir -r requirements.txt
-
-      - name: Download prediction database from production
-        # In a real deployment, pull the predictions.db from production server
-        # e.g.: scp user@prod:/app/data/predictions.db data/predictions.db
-        # For now we check if it exists locally
+      - name: Check production drift
+        id: check
+        env:
+          PROD_API_URL: ${{ secrets.PROD_API_URL }}
+          PROD_API_KEY: ${{ secrets.PROD_API_KEY }}
         run: |
-          mkdir -p data
-          if [ ! -f data/predictions.db ]; then
-            echo "No prediction database found — creating empty one for drift check"
-            python3 -c "
-          import sqlite3, pathlib
-          db = sqlite3.connect('data/predictions.db')
-          db.close()
-            "
+          if [ -z "$PROD_API_URL" ]; then
+            echo "PROD_API_URL secret not set — drift check skipped"
+            echo "drift_status=skipped" >> $GITHUB_OUTPUT
+            echo "drift_alerts=none" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
-      - name: Run drift check
-        id: check
-        run: |
-          python3 - <<'EOF'
-          import sys, json
-          sys.path.insert(0, '.')
-          from src.new_york_workflow.nyc_drift import DriftMonitor
-          monitor = DriftMonitor()
-          report  = monitor.check(window_hours=168)
-          print(json.dumps(report.to_dict(), indent=2))
+          RESPONSE=$(curl -sf --max-time 30 \
+            -H "X-API-Key: $PROD_API_KEY" \
+            "${PROD_API_URL}/drift?window_hours=168&push_alert=true") || {
+            echo "Production API unreachable — drift check skipped"
+            echo "drift_status=api_unreachable" >> $GITHUB_OUTPUT
+            echo "drift_alerts=none" >> $GITHUB_OUTPUT
+            exit 0
+          }
 
-          with open('drift_report.json', 'w') as f:
-              json.dump(report.to_dict(), f, indent=2)
+          echo "$RESPONSE" | tee drift_report.json
 
-          import os
-          alerts_str = ' | '.join(report.alerts) if report.alerts else 'none'
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as _gh:
-              print(f'drift_status={report.status}', file=_gh)
-              print(f'drift_alerts={alerts_str}', file=_gh)
+          STATUS=$(echo "$RESPONSE" | python3 -c \
+            "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))")
+          ALERTS=$(echo "$RESPONSE" | python3 -c \
+            "import sys,json; d=json.load(sys.stdin); alerts=d.get('alerts',[]); print(' | '.join(alerts) if alerts else 'none')")
 
-          if report.status == 'critical':
-              print('DRIFT CRITICAL — will trigger retraining')
-              sys.exit(0)
-          elif report.status == 'warning':
-              print('DRIFT WARNING — monitoring, no retraining yet')
-              sys.exit(0)
-          else:
-              print('No drift detected')
-          EOF
+          echo "drift_status=$STATUS" >> $GITHUB_OUTPUT
+          echo "drift_alerts=$ALERTS"  >> $GITHUB_OUTPUT
+          echo "Drift status: $STATUS"
 
       - name: Upload drift report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: drift-report
           path: drift_report.json
+          if-no-files-found: ignore
 
       - name: Create GitHub issue on critical drift
         if: steps.check.outputs.drift_status == 'critical'
@@ -173,6 +158,6 @@ jobs:
                 owner:    context.repo.owner,
                 repo:     context.repo.repo,
                 issue_number: issues.data[0].number,
-                body: '⚠️ Retraining triggered but **validation gate failed**. Current Production model unchanged. Manual investigation required.',
+                body: '⚠️ Retraining triggered but **validation gate failed**. Current production model unchanged. Manual investigation required.',
               });
             }

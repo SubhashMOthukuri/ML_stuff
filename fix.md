@@ -295,6 +295,38 @@ labels:
 
 ---
 
+## 21. Drift monitoring in CI used empty SQLite — results were meaningless
+
+**Problem:** The nightly drift-check job created an empty SQLite database in the CI runner and ran `DriftMonitor` against it. This always returned `insufficient_data` — the CI result told you nothing about actual production drift.
+
+**Fix:** Replaced the local Python drift check with a direct call to the production API's `/drift?window_hours=168&push_alert=true` endpoint. The API runs against its own production Postgres (injected via Secrets Manager) and also fires Slack alerts automatically when drift is critical. CI parses the JSON response and passes `drift_status` to the retrain job.
+
+Two new GitHub secrets are required:
+- `PROD_API_URL` — the backend LoadBalancer hostname (e.g. `http://abc.us-east-2.elb.amazonaws.com:8001`)
+- `PROD_API_KEY` — a valid API key (same value as `VALID_API_KEYS` in Secrets Manager)
+
+If either secret is missing or the prod API is unreachable, the job logs a warning and skips gracefully — it does not trigger a false retrain.
+
+---
+
+## 22. EKS cluster on 1.31 — AWS support ends 2026-11-26
+
+**Problem:** Terraform `infra/aws/main.tf` had `version = "1.31"`. AWS extended support for K8s 1.31 ends 2026-11-26. After that date the cluster becomes unsupported.
+
+**Fix:** Created `.github/workflows/eks-upgrade.yml` and `scripts/eks_step_upgrade.sh`. AWS EKS requires upgrading one minor version at a time, so the workflow steps through: `1.31 → 1.32 → 1.33 → 1.34 → 1.35`. Each step:
+1. Upgrades the control plane and waits for `ACTIVE`
+2. Upgrades EKS add-ons (`vpc-cni`, `kube-proxy`, `coredns`) to the default version for that K8s version
+3. Upgrades the managed node group and waits for `ACTIVE`
+
+The workflow is **manual-trigger only** and **dry-run by default** — you must explicitly set `dry_run=false` to make real changes. After all four steps complete, it commits the Terraform version bump to `1.35` automatically.
+
+**How to run:**
+1. Go to GitHub Actions → "EKS Upgrade 1.31 → 1.35"
+2. Click "Run workflow" — leave dry_run=`true` first to see the plan
+3. If the plan looks correct, re-run with dry_run=`false`
+
+---
+
 ## Known remaining item
 
-**Frontend runs as root:** The official `nginx:alpine` image requires root to bind port 80. The fix is to switch to `nginxinc/nginx-unprivileged` (listens on 8080) and update `frontend/nginx.conf` and `frontend.yaml` accordingly. Left intentionally — no functional impact, purely a security hardening task.
+**Frontend runs as root:** The official `nginx:alpine` image requires root to bind port 80. The fix is to switch to `nginxinc/nginx-unprivileged` (listens on 8080) and update `frontend/nginx.conf` and `frontend.yaml` accordingly. Left intentionally — security team item.

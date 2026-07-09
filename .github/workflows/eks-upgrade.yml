@@ -1,0 +1,102 @@
+name: EKS Upgrade 1.31 → 1.35
+
+# Manual trigger only — never automatic.
+# Dry run is the default. Set dry_run=false to actually upgrade.
+#
+# Upgrade path: 1.31 → 1.32 → 1.33 → 1.34 → 1.35 (one minor version per step,
+# AWS EKS requirement). Each step: control plane → add-ons → node group.
+#
+# Required GitHub secrets (already exist): AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, GH_PAT
+# Deadline: 2026-11-26 (K8s 1.31 AWS extended support end)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (true = plan only, false = actually upgrade)'
+        required: true
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+      start_from:
+        description: 'Skip to this version step (leave blank to run all steps)'
+        required: false
+        default: ''
+        type: choice
+        options: ['', '1.32', '1.33', '1.34', '1.35']
+
+env:
+  CLUSTER:    nyc-airbnb
+  REGION:     us-east-2
+  NODE_GROUP: nyc-airbnb-nodes
+
+jobs:
+  upgrade:
+    name: Step-by-step upgrade 1.31 → 1.35
+    runs-on: ubuntu-latest
+    timeout-minutes: 240   # 4 h — 4 steps × up to 30 min each for plane + nodes
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            us-east-2
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name $CLUSTER --region $REGION
+
+      - name: Verify current cluster state
+        run: |
+          CURRENT=$(aws eks describe-cluster --name $CLUSTER --region $REGION \
+            --query 'cluster.version' --output text)
+          STATUS=$(aws eks describe-cluster --name $CLUSTER --region $REGION \
+            --query 'cluster.status' --output text)
+          echo "Cluster: $CLUSTER  version: $CURRENT  status: $STATUS"
+          echo "Dry run: ${{ inputs.dry_run }}"
+          [[ "$STATUS" != "ACTIVE" ]] && echo "ERROR: cluster is not ACTIVE" && exit 1
+          echo "Current node count:"
+          kubectl get nodes --no-headers | wc -l
+
+      - name: Make upgrade script executable
+        run: chmod +x scripts/eks_step_upgrade.sh
+
+      - name: Step 1.31 → 1.32
+        if: inputs.start_from == '' || inputs.start_from == '1.32'
+        run: scripts/eks_step_upgrade.sh 1.32 "${{ inputs.dry_run }}"
+
+      - name: Step 1.32 → 1.33
+        if: inputs.start_from == '' || inputs.start_from == '1.32' || inputs.start_from == '1.33'
+        run: scripts/eks_step_upgrade.sh 1.33 "${{ inputs.dry_run }}"
+
+      - name: Step 1.33 → 1.34
+        if: inputs.start_from == '' || inputs.start_from == '1.32' || inputs.start_from == '1.33' || inputs.start_from == '1.34'
+        run: scripts/eks_step_upgrade.sh 1.34 "${{ inputs.dry_run }}"
+
+      - name: Step 1.34 → 1.35
+        run: scripts/eks_step_upgrade.sh 1.35 "${{ inputs.dry_run }}"
+
+      - name: Verify final cluster version
+        run: |
+          FINAL=$(aws eks describe-cluster --name $CLUSTER --region $REGION \
+            --query 'cluster.version' --output text)
+          echo "Final cluster version: $FINAL"
+          kubectl get nodes
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            echo "Dry run complete — no changes made"
+          fi
+
+      - name: Update Terraform state to 1.35
+        if: inputs.dry_run == 'false'
+        run: |
+          sed -i 's/version  = "1\.[0-9][0-9]*"/version  = "1.35"/' infra/aws/main.tf
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add infra/aws/main.tf
+          git diff --staged --quiet || git commit -m "chore(infra): bump EKS cluster version to 1.35 [skip ci]"
+          git push
