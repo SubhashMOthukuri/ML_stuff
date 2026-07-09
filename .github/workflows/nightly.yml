@@ -67,9 +67,11 @@ jobs:
           with open('drift_report.json', 'w') as f:
               json.dump(report.to_dict(), f, indent=2)
 
-          print(f'::set-output name=drift_status::{report.status}')
+          import os
           alerts_str = ' | '.join(report.alerts) if report.alerts else 'none'
-          print(f'::set-output name=drift_alerts::{alerts_str}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as _gh:
+              print(f'drift_status={report.status}', file=_gh)
+              print(f'drift_alerts={alerts_str}', file=_gh)
 
           if report.status == 'critical':
               print('DRIFT CRITICAL — will trigger retraining')

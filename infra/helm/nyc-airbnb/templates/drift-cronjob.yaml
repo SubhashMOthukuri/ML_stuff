@@ -11,6 +11,8 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 1          # one retry before marking Failed
+      activeDeadlineSeconds: 600  # kill runaway jobs after 10 min
+      ttlSecondsAfterFinished: 86400  # clean up completed pods after 24 h
       template:
         spec:
           restartPolicy: Never

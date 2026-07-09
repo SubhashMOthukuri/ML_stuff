@@ -31,6 +31,11 @@ env:
   MLFLOW_ARTIFACT_ROOT: "s3://nyc-airbnb-models-698172256228/mlflow/"
   DD_ENV: prod
   DD_SERVICE: nyc-airbnb
+  # Set to the frontend LoadBalancer hostname once assigned, e.g.:
+  #   CORS_ALLOW_ORIGINS: "http://a1b2c3.elb.amazonaws.com"
+  # Frontend nginx proxies /api/* so browser never calls the API directly —
+  # this only matters for external callers (Swagger UI, direct API consumers).
+  CORS_ALLOW_ORIGINS: "*"
   # PREDICTION_DB, SHADOW_DB_URL, MLFLOW_TRACKING_URI injected from nyc-airbnb-secrets (ESO → Secrets Manager)
 
 redis:
@@ -53,10 +58,15 @@ hpa:
 
 secretName: nyc-airbnb-secrets
 
+# Prometheus operator ServiceMonitor label — must match the operator's serviceMonitorSelector.
+# Run: kubectl get prometheuses -A -o jsonpath='{..serviceMonitorSelector}' to verify.
+prometheusRelease: kube-prometheus
+
 frontend:
+  replicaCount: 1
+  hpa:
+    minReplicas: 1
+    maxReplicas: 3
   image:
     repository: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend
     tag: e935b75
-
-
-

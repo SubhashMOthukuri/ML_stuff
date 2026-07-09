@@ -4,7 +4,9 @@ metadata:
   name: {{ .Release.Name }}-pdb
   namespace: {{ .Release.Namespace }}
 spec:
-  minAvailable: 1
+  # maxUnavailable: 1 allows node drains to proceed even at minReplicas=1.
+  # Raise to minAvailable: 1 only after HPA minReplicas >= 2.
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: {{ .Release.Name }}

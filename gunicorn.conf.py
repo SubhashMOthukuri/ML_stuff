@@ -41,3 +41,5 @@ access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"
 # ── process ───────────────────────────────────────────────────────────────────
 proc_name     = "nyc-api"
 preload_app   = True     # load model once in master, fork to workers (saves memory)
+max_requests        = 1000   # recycle worker after N requests — guards against slow memory leaks
+max_requests_jitter = 100    # randomize so workers don't all restart simultaneously
