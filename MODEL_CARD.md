@@ -254,3 +254,14 @@ Manual retrain: `python scripts/retrain.py`
 
 Model versions are tracked in MLflow. Promotion follows shadow → A/B → canary
 before replacing the champion. See [README.md](README.md) for the full rollout workflow.
+
+---
+
+## Further Reading
+
+| Document | What it covers |
+|----------|---------------|
+| [README.md](README.md) | Quick start, API reference, deployment guide, environment variables |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full system walkthrough — component map, design decisions, critical invariants |
+| [docs/benchmark.md](docs/benchmark.md) | Dataset stats, model comparison (Dummy / Ridge / RF / XGBoost), feature engineering rationale |
+| [docs/fix.md](docs/fix.md) | Historical record of all 22 production problems found and how they were resolved |

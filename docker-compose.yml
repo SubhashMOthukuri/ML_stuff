@@ -61,7 +61,7 @@ services:
       - "24224:24224/udp"
       - "2020:2020"         # Fluent Bit health/metrics endpoint
     volumes:
-      - ./fluent-bit:/fluent-bit/etc:ro
+      - ./infra/monitoring/fluent-bit:/fluent-bit/etc:ro
     environment:
       DD_API_KEY:     ${DD_API_KEY:-}
       DD_SERVICE:     ${DD_SERVICE:-nyc-api}
@@ -134,8 +134,8 @@ services:
       - "80:80"      # HTTP → redirect to HTTPS
       - "443:443"    # HTTPS
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/certs:/etc/nginx/certs:ro
     networks:
       - backend
     healthcheck:
@@ -165,7 +165,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -192,8 +192,8 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
     depends_on:
       - prometheus
     networks:

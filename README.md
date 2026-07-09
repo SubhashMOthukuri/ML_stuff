@@ -4,8 +4,9 @@ Production ML service that predicts nightly Airbnb prices for NYC listings.
 XGBoost model (R²=0.82, MAE=$58) served via ONNX Runtime, with SHAP explanations,
 Redis caching, shadow/A/B/canary rollout, drift detection, and automated retraining.
 
-See [`newyork_benchmark.md`](newyork_benchmark.md) for full model evaluation and
-[`MODEL_CARD.md`](MODEL_CARD.md) for model governance details.
+See [`docs/benchmark.md`](docs/benchmark.md) for full model evaluation,
+[`MODEL_CARD.md`](MODEL_CARD.md) for model governance, and
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a full system walkthrough — read that before changing core modules.
 
 ---
 

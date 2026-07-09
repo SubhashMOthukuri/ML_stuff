@@ -28,11 +28,16 @@ mlartifacts/
 mlflow.db
 
 # Load test results
-load-tests/results/
+tests/load/results/
 
 # Terraform — state files contain sensitive resource IDs, tfvars has account OCIDs
-infra/terraform/.terraform/
-infra/terraform/.terraform.lock.hcl
-infra/terraform/terraform.tfstate
-infra/terraform/terraform.tfstate.backup
-infra/terraform/terraform.tfvars
+infra/aws/.terraform/
+infra/aws/.terraform.lock.hcl
+infra/aws/terraform.tfstate
+infra/aws/terraform.tfstate.backup
+infra/aws/terraform.tfvars
+infra/oracle/.terraform/
+infra/oracle/.terraform.lock.hcl
+infra/oracle/terraform.tfstate
+infra/oracle/terraform.tfstate.backup
+infra/oracle/terraform.tfvars

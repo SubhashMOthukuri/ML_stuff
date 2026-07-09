@@ -21,7 +21,7 @@ on:
       - "src/metrics.py"
       - "scripts/retrain.py"
       - "requirements.txt"
-      - "load-tests/smoke.js"
+      - "tests/load/smoke.js"
   workflow_dispatch:
     inputs:
       vus:
@@ -116,14 +116,14 @@ jobs:
       # We override stages via env vars so workflow_dispatch inputs work.
       - name: Run k6 smoke test
         run: |
-          mkdir -p load-tests/results
-          k6 run load-tests/smoke.js \
+          mkdir -p tests/load/results
+          k6 run tests/load/smoke.js \
             --env K6_API_URL=http://localhost:8001 \
             --env K6_API_KEY=ci-load-test-key \
             --stage "10s:${{ github.event.inputs.vus || '20' }}" \
             --stage "${{ github.event.inputs.duration || '30s' }}:${{ github.event.inputs.vus || '20' }}" \
             --stage "10s:0" \
-            --out json=load-tests/results/raw.json
+            --out json=tests/load/results/raw.json
 
       # ── 7. Upload results ────────────────────────────────────────────────────
       # The summary.json written by handleSummary() and the raw JSONL from --out
@@ -133,17 +133,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: load-test-results-${{ github.run_id }}
-          path: load-tests/results/
+          path: tests/load/results/
           retention-days: 14
 
       # ── 8. Print summary to CI log ───────────────────────────────────────────
       - name: Print summary
         if: always()
         run: |
-          if [ -f load-tests/results/summary.json ]; then
+          if [ -f tests/load/results/summary.json ]; then
             python - <<'EOF'
           import json, sys
-          d = json.load(open("load-tests/results/summary.json"))
+          d = json.load(open("tests/load/results/summary.json"))
           m = d.get("metrics", {})
           dur  = m.get("http_req_duration", {}).get("values", {})
           reqs = m.get("http_reqs", {}).get("values", {})

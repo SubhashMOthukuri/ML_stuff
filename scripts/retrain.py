@@ -288,8 +288,8 @@ def clean_and_engineer(raw_path: Path) -> pd.DataFrame:
     Returns:
         Engineered DataFrame with the same column set as engineered_features.csv.
     """
-    c = _load_module("cleaning",     "src/new_york_workflow/1_data_cleaning.py")
-    e = _load_module("engineering",  "src/new_york_workflow/2_feature_engineering.py")
+    c = _load_module("cleaning",     "src/new_york_workflow/pipeline/1_data_cleaning.py")
+    e = _load_module("engineering",  "src/new_york_workflow/pipeline/2_feature_engineering.py")
 
     # ── Step 1: clean ─────────────────────────────────────────────────────────
     logger.info("=== CLEANING  %s ===", raw_path.name)
