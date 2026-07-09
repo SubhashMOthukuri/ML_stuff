@@ -17,6 +17,16 @@ spec:
       containers:
         - name: redis
           image: {{ .Values.redis.image }}
+          command:
+            - redis-server
+            - --maxmemory
+            - {{ .Values.redis.maxmemory | default "256mb" | quote }}
+            - --maxmemory-policy
+            - allkeys-lru
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - everysec
           ports:
             - containerPort: {{ .Values.redis.port }}
           resources:

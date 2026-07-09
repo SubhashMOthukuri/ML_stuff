@@ -323,10 +323,11 @@ canary traffic split, active alert count, DLQ size.
 ## Security
 
 - API pod runs as non-root (UID 1000), read-only root filesystem, all Linux capabilities dropped
+- Frontend pod runs as non-root (UID 101) via `nginxinc/nginx-unprivileged`, all capabilities dropped
 - NetworkPolicy: ingress on 8001 only; egress to Redis (6379), DNS (53), AWS (443) only
 - Secrets injected from AWS Secrets Manager via External Secrets Operator (not in env files)
+- Redis AOF persistence enabled (`appendonly yes`, fsync every second) — batch jobs survive pod restarts
 - `terraform.tfvars` is gitignored — never commit it
-- Frontend nginx runs as root (port 80 binding) — switching to `nginxinc/nginx-unprivileged` is a tracked TODO
 
 ---
 
@@ -337,5 +338,5 @@ See [`MODEL_CARD.md`](MODEL_CARD.md) for model-level limitations.
 - **Luxury listings excluded:** Listings above the 99th price percentile (~$1,562/night) are excluded from training. The model is unreliable for ultra-luxury properties.
 - **No booking demand data:** Occupancy rate and seasonal demand are not available from InsideAirbnb — including them would improve R² by an estimated +3–4%.
 - **NYC only:** Trained exclusively on New York City listings. Not transferable to other cities without retraining.
-- **Frontend security context:** nginx image requires root to bind port 80. Switching to `nginxinc/nginx-unprivileged` (port 8080) is a security team item.
+- **IRSA not configured:** External Secrets Operator uses static IAM keys. Migrating to IRSA (IAM Roles for Service Accounts) is the correct long-term approach.
 - **IRSA not configured:** External Secrets Operator uses static IAM keys. Migrating to IRSA (IAM Roles for Service Accounts) is the correct long-term approach.

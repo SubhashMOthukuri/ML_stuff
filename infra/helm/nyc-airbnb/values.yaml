@@ -42,6 +42,7 @@ redis:
   enabled: true
   image: redis:7-alpine
   port: 6379
+  maxmemory: "256mb"
   resources:
     requests:
       cpu: 100m
