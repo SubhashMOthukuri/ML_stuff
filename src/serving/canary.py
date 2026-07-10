@@ -28,7 +28,6 @@ import json
 import logging
 import shutil
 import sqlite3
-import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -249,11 +248,12 @@ class CanaryDeployment:
             })
             self._save_state()
 
+            if next_pct == 100:
+                result = self._promote_locked()
+                logger.info("Canary: advanced %d%% → %d%% → promoted", cur_pct, next_pct)
+                return result
+
         logger.info("Canary: advanced %d%% → %d%%", cur_pct, next_pct)
-
-        if next_pct == 100:
-            return self._promote()
-
         return {"success": True, "previous_pct": cur_pct, "current_pct": next_pct}
 
     def _promote(self) -> dict:
@@ -496,7 +496,6 @@ class CanaryDeployment:
 
         # Push alert via nyc_alerts so it surfaces at GET /alerts
         try:
-            sys.path.insert(0, str(BASE_DIR))
             from src.serving.alerts import alerts
             alerts.push_once(
                 alert_type = "post_promotion_revert",

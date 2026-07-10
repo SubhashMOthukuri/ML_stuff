@@ -559,3 +559,59 @@ def _add_service_context(logger, method, event_dict):
 **Problem:** For each of k categories, `current_values.count(cat)` did a full linear scan of the n-element list. For `borough` (5 categories) with 1000 samples, this was 5000 comparisons when 1000 would suffice.
 
 **Fix:** Pre-compute `Counter(current_values)` once (O(n)), then use `.get()` per category (O(1)).
+
+---
+
+## 48. `src/serving/ground_truth.py` — Postgres DSN wrapped in `Path()`, silently creating a local SQLite junk file
+
+**Problem:** `GroundTruthStore.__init__` called `self._path = Path(db_path)` where `db_path` defaults to `settings.prediction_db`. In production, `PREDICTION_DB=postgresql://...`, so `Path("postgresql://user:pw@host/db")` normalised the double-slash to `"postgresql:/user:pw@host/db"`. `sqlite3.connect()` then opened a file at that local path instead of connecting to Postgres. All ground truth data was written to a random junk file — never queryable, never persisted. The bug was silent because SQLite happily creates files it doesn't find.
+
+**Fix:** Detect Postgres DSN prefix; fall back to a known local SQLite file (`data/ground_truth.db`) and emit a `logger.warning` so the operator can configure a separate ground truth DB. `GroundTruthStore` is intentionally SQLite-only (no Postgres support).
+
+---
+
+## 49. `src/serving/ground_truth.py` — `error_distribution()` fetched all rows to Python for bucketing
+
+**Problem:** `error_distribution()` ran `SELECT abs_error FROM ground_truth` (all rows), then iterated them in Python with if/elif to bucket. At 100 k ground truth rows, this transferred all rows over the SQLite IPC boundary and did O(n) Python comparisons when a single SQL aggregation would produce the same result with one pass.
+
+**Fix:** Replaced with a single SQL query using `SUM(abs_error < 10)`, `SUM(abs_error >= 10 AND abs_error < 25)`, etc. — the DB engine does one scan and returns 6 integers.
+
+---
+
+## 50. `src/serving/shadow.py` — `_SHADOW_DB_DEFAULT` dead code
+
+**Problem:** `_SHADOW_DB_DEFAULT = str(BASE_DIR / "data" / "shadow_comparisons.db")` was defined at module level but never used. `ShadowPredictor.__init__` uses `settings.shadow_db_url_effective` instead. The stale constant was misleading — it implied shadow comparisons go to a separate file, whereas the actual default shares the prediction DB.
+
+**Fix:** Removed the unused constant.
+
+---
+
+## 51. `src/serving/ab.py` — Postgres DSN corrupted by `Path()` wrapping
+
+**Problem:** `db_path: Path = DB_PATH = settings.prediction_db`. In production, `PREDICTION_DB=postgresql://...`, so `Path("postgresql://user:pw@host/db")` normalises the double-slash to a single slash. `sqlite3.connect("postgresql:/user:pw@host/db")` then opens a local file at that malformed path instead of connecting to Postgres. `ABTest` is SQLite-only, so all `ab_predictions` and `ground_truth` JOIN queries ran against a junk local file — the A/B test was silently broken in production.
+
+**Fix:** Added Postgres DSN detection in `__init__`; falls back to `data/ab.db` local SQLite with a `logger.warning`.
+
+---
+
+## 52. `src/serving/ab.py` — `STATE_PATH` relative to process CWD instead of project root
+
+**Problem:** `STATE_PATH = Path("data/ab_state.json")` is a relative path. In Docker the CWD is typically `/app`, but in tests it may be the project root or a temp dir. This caused the state file to land in a different location depending on how the process was launched, so A/B test state would not survive restarts in some environments.
+
+**Fix:** Changed to `_BASE_DIR / "data" / "ab_state.json"` where `_BASE_DIR = Path(__file__).resolve().parents[2]` is the project root.
+
+---
+
+## 53. `src/serving/canary.py` — double-promote race in `advance()`
+
+**Problem:** When advancing from stage 25%→100%, `advance()` updated `stage_idx=3, current_pct=100` inside the lock and saved state, then released the lock, then called `self._promote()` (which re-acquires the lock). Between the lock release and re-acquire, a concurrent `advance()` call could see `idx=3`, trigger the `idx+1 >= len(STAGES)` branch, and call `_promote_locked()` a second time. The second promotion attempt would `shutil.copy2(CHALLENGER_ONNX, ...)` on a file already unlinked by the first promotion, raising `FileNotFoundError`. State would be corrupt (still `active=True`).
+
+**Fix:** Moved `_promote_locked()` call inside the `with self._lock:` block of `advance()` for the `next_pct == 100` case, so promotion is fully atomic with the state update.
+
+---
+
+## 54. `src/serving/canary.py` — `sys.path.insert(0, BASE_DIR)` in background thread
+
+**Problem:** `_revert_to_previous()` called `sys.path.insert(0, str(BASE_DIR))` before importing `src.serving.alerts`. This permanently prepended `BASE_DIR` to `sys.path` on every call — if the post-promotion spike detector fired multiple times, duplicates accumulated at the front of `sys.path`, slowing all future imports. Mutating `sys.path` from a background monitoring thread is also not thread-safe with the import machinery.
+
+**Fix:** Removed `sys.path.insert`. `src.serving.alerts` is already importable as part of the package — no path manipulation needed.

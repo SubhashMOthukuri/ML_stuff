@@ -30,8 +30,10 @@ from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+_BASE_DIR  = Path(__file__).resolve().parents[2]
+_AB_SQLITE_FALLBACK = _BASE_DIR / "data" / "ab.db"
 DB_PATH    = settings.prediction_db
-STATE_PATH = Path("data/ab_state.json")
+STATE_PATH = _BASE_DIR / "data" / "ab_state.json"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ab_predictions (
@@ -65,9 +67,17 @@ class ABTest:
     State survives API restarts via data/ab_state.json.
     """
 
-    def __init__(self, db_path: Path = DB_PATH, state_path: Path = STATE_PATH):
+    def __init__(self, db_path: Path | str | None = None, state_path: Path = STATE_PATH):
         self._lock       = threading.Lock()
-        self._path       = Path(db_path)
+        raw = str(db_path) if db_path is not None else DB_PATH
+        if raw.startswith(("postgresql://", "postgres://")):
+            logger.warning(
+                "ABTest: PREDICTION_DB is a Postgres DSN — "
+                "ab_predictions will be written to local SQLite at %s", _AB_SQLITE_FALLBACK
+            )
+            self._path = _AB_SQLITE_FALLBACK
+        else:
+            self._path = Path(raw)
         self._state_path = Path(state_path)
         self._state: dict = {}
         self._init_db()

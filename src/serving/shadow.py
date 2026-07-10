@@ -44,8 +44,6 @@ BASE_DIR          = Path(__file__).resolve().parents[2]
 MODEL_DIR         = BASE_DIR / "models" / "nyc"
 CHALLENGER_ONNX   = MODEL_DIR / "challenger.onnx"
 CHALLENGER_SCALER = MODEL_DIR / "challenger_scaler.pkl"
-_SHADOW_DB_DEFAULT = str(BASE_DIR / "data" / "shadow_comparisons.db")
-
 # Agreement bands for stats
 TIGHT_BAND_PCT = 5.0    # ±5%  → "tight" agreement
 LOOSE_BAND_PCT = 10.0   # ±10% → "loose" agreement

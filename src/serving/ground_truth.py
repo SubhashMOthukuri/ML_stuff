@@ -46,11 +46,24 @@ CREATE INDEX IF NOT EXISTS idx_gt_borough        ON ground_truth(borough);
 """
 
 
+_GT_SQLITE_FALLBACK = Path(__file__).resolve().parents[2] / "data" / "ground_truth.db"
+
+
 class GroundTruthStore:
 
-    def __init__(self, db_path: Path = DB_PATH):
+    def __init__(self, db_path: Path | str | None = None):
         self._lock = threading.Lock()
-        self._path = Path(db_path)
+        raw = str(db_path) if db_path is not None else DB_PATH
+        if raw.startswith(("postgresql://", "postgres://")):
+            # GroundTruthStore is SQLite-only. In production (Postgres prediction store),
+            # ground truth is kept in a separate local SQLite file.
+            logger.warning(
+                "GroundTruthStore: PREDICTION_DB is a Postgres DSN — "
+                "ground truth will be written to local SQLite at %s", _GT_SQLITE_FALLBACK
+            )
+            self._path = _GT_SQLITE_FALLBACK
+        else:
+            self._path = Path(raw)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
         logger.info("GroundTruthStore ready: %s", self._path)
@@ -150,18 +163,25 @@ class GroundTruthStore:
     def error_distribution(self) -> dict:
         """Bucket abs_error into bands for the frontend histogram."""
         with self._lock, self._conn() as c:
-            rows = c.execute("SELECT abs_error FROM ground_truth").fetchall()
-        if not rows:
+            rows = c.execute("""
+                SELECT
+                    SUM(abs_error < 10)                         AS lt10,
+                    SUM(abs_error >= 10  AND abs_error < 25)    AS lt25,
+                    SUM(abs_error >= 25  AND abs_error < 50)    AS lt50,
+                    SUM(abs_error >= 50  AND abs_error < 100)   AS lt100,
+                    SUM(abs_error >= 100)                       AS gte100,
+                    COUNT(*)                                    AS total
+                FROM ground_truth
+            """).fetchone()
+        n = rows["total"] or 0
+        if not n:
             return {}
-        buckets = {"<$10": 0, "$10-25": 0, "$25-50": 0, "$50-100": 0, ">$100": 0}
-        for r in rows:
-            e = r["abs_error"]
-            if   e < 10:   buckets["<$10"]    += 1
-            elif e < 25:   buckets["$10-25"]  += 1
-            elif e < 50:   buckets["$25-50"]  += 1
-            elif e < 100:  buckets["$50-100"] += 1
-            else:          buckets[">$100"]   += 1
-        n = len(rows)
-        return {k: {"count": v, "pct": round(v / n * 100, 1)} for k, v in buckets.items()}
+        return {
+            "<$10":   {"count": rows["lt10"],   "pct": round(rows["lt10"]   / n * 100, 1)},
+            "$10-25": {"count": rows["lt25"],   "pct": round(rows["lt25"]   / n * 100, 1)},
+            "$25-50": {"count": rows["lt50"],   "pct": round(rows["lt50"]   / n * 100, 1)},
+            "$50-100":{"count": rows["lt100"],  "pct": round(rows["lt100"]  / n * 100, 1)},
+            ">$100":  {"count": rows["gte100"], "pct": round(rows["gte100"] / n * 100, 1)},
+        }
 
 

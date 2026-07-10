@@ -31,9 +31,9 @@ _SEVERITY_EMOJI = {
 
 
 class AlertStore:
-    _lock = threading.Lock()
 
     def __init__(self, path: Path | None = None):
+        self._lock = threading.Lock()
         self._path = Path(path or settings.alerts_file)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         if not self._path.exists():
@@ -88,6 +88,7 @@ class AlertStore:
 
     def push(self, alert_type: str, message: str, severity: str = "warning",
              details: dict | None = None) -> str:
+        severity = severity.lower()
         alert_id, entry = self._build_entry(alert_type, message, severity, details)
         with self._lock:
             alerts = self._read()
@@ -100,6 +101,7 @@ class AlertStore:
     def push_once(self, alert_type: str, message: str, severity: str = "warning",
                   details: dict | None = None) -> str | None:
         """Atomic deduplicated push — suppresses if an unacknowledged alert of the same type exists."""
+        severity = severity.lower()
         alert_id, entry = self._build_entry(alert_type, message, severity, details)
         with self._lock:
             alerts = self._read()

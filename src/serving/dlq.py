@@ -91,8 +91,8 @@ class DeadLetterQueue:
             try:
                 raw = self._client.lrange(DLQ_KEY, 0, n - 1)
                 return [json.loads(r) for r in raw]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("DLQ peek from Redis failed (returning in-memory fallback): %s", exc)
         return self._fallback[:n]
 
     def size(self) -> int:
