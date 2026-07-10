@@ -55,7 +55,9 @@ export default function TrainingDataPanel() {
       const a    = document.createElement('a')
       a.href     = url
       a.download = `nyc_predictions_${new Date().toISOString().slice(0,10)}.csv`
+      document.body.appendChild(a)
       a.click()
+      document.body.removeChild(a)
       URL.revokeObjectURL(url)
 
       setDlStatus('done')

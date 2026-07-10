@@ -1,9 +1,9 @@
-import { Component } from 'react'
+import { Component, Fragment } from 'react'
 
 export default class ErrorBoundary extends Component {
   constructor(props) {
     super(props)
-    this.state = { error: null }
+    this.state = { error: null, resetKey: 0 }
   }
 
   static getDerivedStateFromError(error) {
@@ -20,7 +20,7 @@ export default class ErrorBoundary extends Component {
               {this.state.error?.message ?? String(this.state.error)}
             </p>
             <button
-              onClick={() => this.setState({ error: null })}
+              onClick={() => this.setState(s => ({ error: null, resetKey: s.resetKey + 1 }))}
               className="mt-6 px-4 py-2 rounded-xl border border-red-500/30 bg-red-500/15
                          text-red-300 text-sm hover:bg-red-500/25 transition-colors">
               Try again
@@ -29,6 +29,7 @@ export default class ErrorBoundary extends Component {
         </div>
       )
     }
-    return this.props.children
+    // key forces React to unmount + remount children on each retry
+    return <Fragment key={this.state.resetKey}>{this.props.children}</Fragment>
   }
 }

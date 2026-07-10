@@ -26,8 +26,12 @@ export default function AlertsPage() {
   async function acknowledge(id) {
     setAcking(id)
     try {
-      await fetch(`/api/alerts/${id}/acknowledge`, { method: 'POST' })
+      const r = await fetch(`/api/alerts/${id}/acknowledge`, { method: 'POST' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
       refresh()
+    } catch (e) {
+      // error is non-blocking — the list will re-fetch and show the true state
+      console.error('Acknowledge failed:', e.message)
     } finally {
       setAcking(null)
     }
@@ -36,8 +40,11 @@ export default function AlertsPage() {
   async function acknowledgeAll() {
     setAckingAll(true)
     try {
-      await fetch('/api/alerts/acknowledge-all', { method: 'POST' })
+      const r = await fetch('/api/alerts/acknowledge-all', { method: 'POST' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
       refresh()
+    } catch (e) {
+      console.error('Acknowledge-all failed:', e.message)
     } finally {
       setAckingAll(false)
     }

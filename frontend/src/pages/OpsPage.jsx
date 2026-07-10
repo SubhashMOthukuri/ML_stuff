@@ -40,7 +40,9 @@ export default function OpsPage() {
       const a = document.createElement('a')
       a.href = url
       a.download = `nyc_predictions_${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
       a.click()
+      document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } finally {
       setDownloading(false)

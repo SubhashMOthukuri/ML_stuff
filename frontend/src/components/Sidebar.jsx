@@ -1,4 +1,12 @@
-import { Sparkles, Building2 } from 'lucide-react'
+import { Sparkles, Bell, Activity, Server, FlaskConical, Building2 } from 'lucide-react'
+
+const NAV = [
+  { id: 'predict', label: 'Price My Listing', icon: Sparkles     },
+  { id: 'alerts',  label: 'Alerts',           icon: Bell         },
+  { id: 'drift',   label: 'Drift Monitor',    icon: Activity     },
+  { id: 'ops',     label: 'Operations',       icon: Server       },
+  { id: 'shadow',  label: 'Shadow Lab',       icon: FlaskConical },
+]
 
 export default function Sidebar({ page, setPage }) {
   return (
@@ -17,24 +25,27 @@ export default function Sidebar({ page, setPage }) {
       </div>
 
       {/* nav */}
-      <nav className="flex-1 px-3 py-4">
-        <button
-          onClick={() => setPage('predict')}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left
-                     transition-all duration-150 relative"
-          style={{
-            background: page === 'predict' ? 'rgba(225,29,72,0.12)' : 'transparent',
-            color:      page === 'predict' ? '#fff' : 'rgba(255,255,255,0.45)',
-          }}
-        >
-          {page === 'predict' && (
-            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-rose-500" />
-          )}
-          <Sparkles size={16}
-            style={{ color: page === 'predict' ? '#e11d48' : 'rgba(255,255,255,0.35)' }}
-            className="shrink-0" />
-          <span className="text-[13px] font-medium">Price My Listing</span>
-        </button>
+      <nav className="flex-1 px-3 py-4 space-y-0.5">
+        {NAV.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setPage(id)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left
+                       transition-all duration-150 relative"
+            style={{
+              background: page === id ? 'rgba(225,29,72,0.12)' : 'transparent',
+              color:      page === id ? '#fff' : 'rgba(255,255,255,0.45)',
+            }}
+          >
+            {page === id && (
+              <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-rose-500" />
+            )}
+            <Icon size={16}
+              style={{ color: page === id ? '#e11d48' : 'rgba(255,255,255,0.35)' }}
+              className="shrink-0" />
+            <span className="text-[13px] font-medium">{label}</span>
+          </button>
+        ))}
       </nav>
     </aside>
   )

@@ -688,3 +688,75 @@ def _add_service_context(logger, method, event_dict):
 
 **Fix:** Removed `DataQualityError` from the import. Replaced `from datetime import datetime` with `from datetime import date`.
 
+
+---
+
+## 64. `frontend/src/App.jsx` — sidebar, header, and 4 pages were never rendered
+
+**Problem:** `App.jsx` rendered only `PredictPage` in a plain white wrapper, ignoring the entire dark-theme infrastructure: `Header.jsx`, `Sidebar.jsx`, `AlertsPage`, `DriftPage`, `OpsPage`, and `ShadowPage` all existed but had no entry point. Users were permanently stuck on the predict form with no way to reach ops, alerts, drift, or shadow tooling.
+
+**Fix:** Added `page` state (default `'predict'`), imported and rendered `Header` + `Sidebar` + `useMetrics`. The main content area now switches pages based on sidebar selection. The old single-column light wrapper was removed.
+
+---
+
+## 65. `frontend/src/components/Sidebar.jsx` — only one nav item
+
+**Problem:** The sidebar had a single hardcoded button for `'predict'`. Even after wiring up the app shell, clicking Alerts, Drift, Ops, or Shadow would be impossible because there were no buttons for them.
+
+**Fix:** Replaced the hardcoded single button with a `NAV` array of `{ id, label, icon }` entries for all five pages, rendered with the same active-indicator style.
+
+---
+
+## 66. `frontend/src/pages/PredictPage.jsx` — `amenity_count` hardcoded to 30
+
+**Problem:** Every prediction payload sent `amenity_count: 30` regardless of which amenities the user toggled. Since the model treats `amenity_count` as a continuous numeric feature, a listing with no amenities and one with all six got identical predictions for this dimension.
+
+**Fix:** Computed `checkedAmenities` by counting how many of the six amenity keys are `true` in the form, then sent `amenity_count: 25 + checkedAmenities` (25 = typical baseline for unlisted amenities like towels, kitchen, etc.).
+
+---
+
+## 67. `frontend/src/pages/PredictPage.jsx` — light-theme text invisible on dark background
+
+**Problem:** The page title used `text-slate-900` and subtitle `text-slate-500`, and the error banner used `bg-red-50 text-red-600` — all light-theme classes. Once `App.jsx` renders the page inside the dark `#0c0c0e` shell, the title becomes near-invisible and the error banner looks out of place.
+
+**Fix:** Changed title to `text-white`, subtitle to `text-white/50`, and the error banner to `bg-red-500/10 border-red-500/25 text-red-300` matching the dark-theme style used in other pages.
+
+---
+
+## 68. `frontend/src/ErrorBoundary.jsx` — "Try again" immediately re-crashes
+
+**Problem:** Clicking "Try again" called `this.setState({ error: null })`, which cleared the error state but left the child component tree intact. React re-rendered the same crashed child with the same broken state, triggering `getDerivedStateFromError` again instantly.
+
+**Fix:** Added a `resetKey` counter to state. "Try again" increments it; the children are wrapped in `<Fragment key={resetKey}>` so React fully unmounts and remounts them on each retry, giving them a clean slate.
+
+---
+
+## 69. `frontend/src/App.css` — Vite scaffold CSS never removed
+
+**Problem:** `App.css` still contained the entire Vite create-app template (`.hero`, `.counter`, `.ticks`, `#center`, `#next-steps`, `#spacer`, etc.). None of these selectors matched anything in the actual app, but they were imported in `main.jsx` and included in the production bundle.
+
+**Fix:** Cleared the file to a single comment line; all Vite-template selectors removed.
+
+---
+
+## 70. `frontend/src/index.css` — slider thumb color conflicts with form accent
+
+**Problem:** The global `input[type="range"]::-webkit-slider-thumb { background: #e11d48 }` rule painted every range thumb rose-red. The listing form uses `accent-sky-600` for the track fill, creating a visible mismatch: blue track, red thumb.
+
+**Fix:** Changed the thumb to `#0284c7` (sky-600) and updated the `box-shadow` glow to match, so thumb and track are visually consistent.
+
+---
+
+## 71. `frontend/src/pages/OpsPage.jsx` + `frontend/src/components/TrainingDataPanel.jsx` — CSV download fails in Firefox
+
+**Problem:** Both components created a synthetic `<a>` element, set `href` and `download`, then called `.click()` without appending it to the DOM. Firefox ignores `.click()` on detached elements, so the download silently did nothing.
+
+**Fix:** Added `document.body.appendChild(a)` before `.click()` and `document.body.removeChild(a)` after, following the spec-compliant pattern that works across all browsers.
+
+---
+
+## 72. `frontend/src/pages/AlertsPage.jsx` — acknowledge calls don't check response status
+
+**Problem:** `acknowledge(id)` and `acknowledgeAll()` called `fetch()` and then unconditionally called `refresh()` — even on 4xx/5xx responses. If the API rejected the request, the UI reported success and re-fetched as if it worked, leaving the alert un-acknowledged with no error shown.
+
+**Fix:** Added `if (!r.ok) throw new Error(...)` after each fetch. Errors are caught and logged; `refresh()` only fires on success.

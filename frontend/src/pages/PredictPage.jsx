@@ -40,6 +40,8 @@ export default function PredictPage() {
     setResult(null)
     const coords = BOROUGH_COORDS[form.borough] ?? [40.7128, -74.006]
     const beds   = Math.max(form.bedrooms, 1)
+    const checkedAmenities = ['has_gym', 'has_elevator', 'has_dryer',
+      'has_air_conditioning', 'has_washer', 'has_pool'].filter(k => form[k]).length
     const payload = {
       room_type:                   form.room_type,
       borough:                     form.borough,
@@ -53,7 +55,7 @@ export default function PredictPage() {
       is_private_bath:             form.room_type === 'Entire home/apt',
       latitude:                    coords[0],
       longitude:                   coords[1],
-      amenity_count:               30,
+      amenity_count:               25 + checkedAmenities,
       number_of_reviews_ltm:       Math.min(form.number_of_reviews, 12),
       reviews_per_month:           Math.max(form.number_of_reviews / 24, 0.1),
       review_scores_accuracy:      form.review_scores_rating,
@@ -97,8 +99,8 @@ export default function PredictPage() {
   return (
     <div className="space-y-3">
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-slate-900">Price My Listing</h1>
-        <p className="text-slate-500 text-sm mt-1">
+        <h1 className="text-xl font-bold text-white">Price My Listing</h1>
+        <p className="text-white/50 text-sm mt-1">
           Estimate what your NYC Airbnb could earn per night.
         </p>
       </div>
@@ -106,7 +108,7 @@ export default function PredictPage() {
       <ListingForm form={form} onChange={setForm} onSubmit={handleSubmit} loading={loading} />
 
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-600 text-sm">
+        <div className="rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-red-300 text-sm">
           {error}
         </div>
       )}
