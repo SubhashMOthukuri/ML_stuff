@@ -46,6 +46,114 @@ Redis cache, A/B testing, drift detection, nightly retraining, and Kubernetes de
 
 ---
 
+## Training Loop
+
+Triggered nightly by GitHub Actions when drift is critical, or manually via `scripts/retrain.py`.
+
+```
+  GitHub Actions — nightly.yml
+  GET /drift?window_hours=168 on prod API
+         │
+         │  PSI > 0.2 on any feature (critical drift)
+         ▼
+  scripts/retrain.py
+  ├── 1. Download  InsideAirbnb NYC snapshot
+  ├── 2. Clean     src/training/cleaning.py
+  ├── 3. Features  src/training/features.py  (58 features, log_price target)
+  ├── 4. Train     src/training/train.py
+  │               XGBoost + Optuna hyperparameter search
+  │               Ridge + RF benchmarked, XGBoost wins
+  ├── 5. Gate      R² must exceed baseline — fail = no promotion
+  └── 6. Export    scripts/export_onnx.py → .onnx artefact
+         │                    │
+         ▼                    ▼
+      S3 bucket            MLflow
+      nyc-airbnb-          run params, metrics,
+      models-*/nyc/        artefacts, challenger tag
+      *.onnx  *.pkl
+         │
+         ▼
+  challenger enters rollout pipeline
+  shadow (silent compare) → A/B (live split) → canary (gradual %) → champion
+  advance via /shadow/promote · /ab/start · /canary/start endpoints
+```
+
+---
+
+## Observability Loop
+
+Three parallel pipelines run continuously from the FastAPI pod.
+
+```
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  FastAPI pod                                                          │
+  │                                                                       │
+  │  structlog (JSON) ──► stdout ──► Fluent Bit ──► Datadog              │
+  │                                                 logs + APM traces    │
+  │                                                                       │
+  │  /metrics (Prometheus) ──────────► Prometheus scrape (ServiceMonitor)│
+  │   latency histograms                      │                          │
+  │   cache hit/miss counters                 ▼                          │
+  │   DLQ size                            Grafana dashboards             │
+  │   canary traffic split                                               │
+  │   active alert count                                                 │
+  │                                                                       │
+  │  /drift (PSI check) ─────────────► Slack webhooks                   │
+  │   warning  PSI 0.1–0.2              #incidents (critical)            │
+  │   critical PSI > 0.2                default channel (warning)        │
+  └──────────────────────────────────────────────────────────────────────┘
+                    │
+                    │  monthly — ground-truth.yml workflow
+                    ▼
+  POST /ground-truth/ingest
+  join stored predictions vs actual InsideAirbnb prices
+  GET /ground-truth/stats → live production MAE vs training baseline
+```
+
+---
+
+## Deployment Loop
+
+Triggered on every push to `main`. ArgoCD also watches the Helm chart for GitOps-driven deploys.
+
+```
+  git push → main
+        │
+        ▼
+  GitHub Actions — deploy.yml
+  ├── pytest (full test suite, stub predictor if no S3)
+  ├── docker buildx --platform linux/arm64,linux/amd64
+  ├── Trivy image security scan (pinned @0.20.0)
+  ├── push ──► ECR  698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb:$tag
+  └── helm upgrade nyc-airbnb infra/helm/nyc-airbnb/
+        │
+        ▼
+  EKS cluster — us-east-2  (K8s 1.35)
+  │
+  ├── ArgoCD
+  │   watches infra/helm/nyc-airbnb/ in git
+  │   auto-syncs on values.yaml change (image tag bump)
+  │
+  ├── External Secrets Operator
+  │   ClusterSecretStore (IRSA — no static keys)
+  │        │
+  │        ▼
+  │   AWS Secrets Manager  nyc-airbnb/prod
+  │        │
+  │        ▼
+  │   K8s Secret ──► Pod env vars
+  │   (REDIS_PASSWORD, VALID_API_KEYS, PREDICTION_DB,
+  │    SLACK_WEBHOOK_URL, DD_API_KEY, MLFLOW_TRACKING_URI)
+  │
+  └── Pods
+      ├── API  (gunicorn + UvicornWorker, 2 replicas, HPA 2–5)
+      ├── Nginx (SSL termination, /api proxy, static frontend)
+      ├── Redis 7 (AOF persistence, named volume)
+      └── MLflow (sqlite backend, port 5000)
+```
+
+---
+
 ## Directory Guide
 
 ### `src/serving/`
