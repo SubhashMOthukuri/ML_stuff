@@ -121,9 +121,14 @@ class BatchWorker:
                 if item is None:
                     continue
                 _, payload_bytes = item
-                self._process(json.loads(payload_bytes))
+                payload = json.loads(payload_bytes)
+                try:
+                    self._process(payload)
+                except Exception as exc:
+                    logger.error("BatchWorker job crash job=%s: %s", payload.get("job_id", "?")[:8], exc, exc_info=True)
+                    self._store._patch(payload["job_id"], {"status": "failed"})
             except Exception as exc:
-                logger.error("BatchWorker error: %s", exc, exc_info=True)
+                logger.error("BatchWorker queue error: %s", exc, exc_info=True)
 
     def _process(self, payload: dict) -> None:
         job_id   = payload["job_id"]
@@ -137,7 +142,7 @@ class BatchWorker:
         errors:  list[dict] = []
 
         for i, raw in enumerate(listings):
-            lid = raw.pop("listing_id", None)
+            lid = raw.get("listing_id")     # don't mutate; predict_raw ignores extra keys
             try:
                 pred = self._pred.predict_raw(raw)
                 entry: dict = {

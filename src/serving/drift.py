@@ -24,6 +24,7 @@ import json
 import logging
 import math
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -70,9 +71,11 @@ class DriftReport:
 
 class DriftMonitor:
 
-    def __init__(self, db_path: Path | None = None, baseline_path: Path = BASELINE):
+    def __init__(self, db_path: str | Path | None = None, baseline_path: Path = BASELINE):
         from src.core.config import settings
-        self._db   = Path(db_path or settings.prediction_db)
+        # Store as raw string — Path() normalises 'postgresql://' to 'postgresql:/'
+        # which breaks psycopg2.connect() in production.
+        self._db   = str(db_path) if db_path is not None else settings.prediction_db
         self._base = self._load_baseline(baseline_path)
 
     @staticmethod
@@ -171,31 +174,35 @@ class DriftMonitor:
     # ── private ───────────────────────────────────────────────────────────────
 
     def _load_recent(self, since_iso: str) -> list[dict]:
-        is_pg = str(self._db).startswith(("postgresql://", "postgres://"))
-        if not is_pg and not self._db.exists():
+        is_pg = self._db.startswith(("postgresql://", "postgres://"))
+        if not is_pg and not Path(self._db).exists():
             return []
         try:
             if is_pg:
                 import psycopg2, psycopg2.extras
-                conn = psycopg2.connect(str(self._db))
+                conn = psycopg2.connect(self._db)
                 conn.cursor_factory = psycopg2.extras.RealDictCursor
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT features_json, predicted_price, borough, room_type FROM predictions "
-                    "WHERE timestamp >= %s AND cache_hit = false",
-                    (since_iso,),
-                )
-                rows = cur.fetchall()
-                conn.close()
+                try:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT features_json, predicted_price, borough, room_type FROM predictions "
+                        "WHERE timestamp >= %s AND cache_hit = false",
+                        (since_iso,),
+                    )
+                    rows = cur.fetchall()
+                finally:
+                    conn.close()
             else:
-                conn = sqlite3.connect(str(self._db))
+                conn = sqlite3.connect(self._db)
                 conn.row_factory = sqlite3.Row
-                rows = conn.execute(
-                    "SELECT features_json, predicted_price, borough, room_type FROM predictions "
-                    "WHERE timestamp >= ? AND cache_hit = 0",
-                    (since_iso,),
-                ).fetchall()
-                conn.close()
+                try:
+                    rows = conn.execute(
+                        "SELECT features_json, predicted_price, borough, room_type FROM predictions "
+                        "WHERE timestamp >= ? AND cache_hit = 0",
+                        (since_iso,),
+                    ).fetchall()
+                finally:
+                    conn.close()
 
             out = []
             for r in rows:
@@ -298,11 +305,12 @@ class DriftMonitor:
     @staticmethod
     def _categorical_psi(current_values: list[str], baseline_props: dict) -> float:
         """PSI for categorical features. Floor at 0.0001 to prevent log(0) blowup."""
-        n    = max(len(current_values), 1)
+        n     = max(len(current_values), 1)
         FLOOR = 0.0001
-        psi  = 0.0
+        counts = Counter(current_values)   # O(n) instead of O(n*k) list.count() in loop
+        psi   = 0.0
         for cat, expected_p in baseline_props.items():
-            actual_p = max(current_values.count(cat) / n, FLOOR)
+            actual_p = max(counts.get(cat, 0) / n, FLOOR)
             e        = max(expected_p, FLOOR)
             psi     += (actual_p - e) * math.log(actual_p / e)
         return max(psi, 0.0)

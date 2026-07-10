@@ -11,6 +11,7 @@ the API continues working, just without caching.
 import hashlib
 import json
 import logging
+from datetime import date
 
 from src.core.config import settings
 
@@ -44,7 +45,10 @@ class PredictionCache:
 
     @staticmethod
     def _key(raw: dict) -> str:
-        canonical = json.dumps(raw, sort_keys=True)
+        # Include today's date so checkin_date-relative features (days_to_checkin)
+        # don't return a stale cached result from a prior day.
+        keyed = {**raw, "_date": date.today().isoformat()}
+        canonical = json.dumps(keyed, sort_keys=True)
         return f"nyc:pred:{hashlib.md5(canonical.encode()).hexdigest()}"
 
     def get(self, raw: dict) -> dict | None:
@@ -66,8 +70,8 @@ class PredictionCache:
             return
         try:
             self._client.setex(self._key(raw), ttl or settings.cache_ttl_seconds, json.dumps(result))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Cache set failed (prediction still served): %s", exc)
 
     def stats(self) -> dict:
         total = self._hits + self._misses

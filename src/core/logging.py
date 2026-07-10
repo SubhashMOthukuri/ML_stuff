@@ -27,6 +27,14 @@ from src.core.config import settings
 
 _SERVICE = settings.dd_service
 _ENV     = settings.dd_env
+_CONFIGURED = False
+
+
+def _add_service_context(logger: object, method: str, event_dict: dict) -> dict:  # noqa: ARG001
+    event_dict.setdefault("service", _SERVICE)
+    event_dict.setdefault("env", _ENV)
+    return event_dict
+
 
 # Processors run on every log record — both structlog and stdlib loggers.
 _SHARED_PROCESSORS: list = [
@@ -36,16 +44,17 @@ _SHARED_PROCESSORS: list = [
     structlog.processors.TimeStamper(fmt="iso"),
     structlog.processors.StackInfoRenderer(),
     structlog.processors.ExceptionRenderer(),
-    structlog.processors.add_log_level,             # normalise level field
+    _add_service_context,
 ]
 
 
 def setup_logging() -> None:
     """Configure root logger + structlog once. Safe to call multiple times."""
-    root = logging.getLogger()
-    if root.handlers:
-        return  # idempotent
+    global _CONFIGURED
+    if _CONFIGURED:
+        return
 
+    root       = logging.getLogger()
     log_format = settings.log_format
     level      = getattr(logging, settings.log_level, logging.INFO)
 
@@ -82,3 +91,4 @@ def setup_logging() -> None:
 
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+    _CONFIGURED = True

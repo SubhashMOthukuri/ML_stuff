@@ -15,7 +15,7 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2]   # ML_stuff/ project root
 
 
 class Settings(BaseSettings):
@@ -56,13 +56,13 @@ class Settings(BaseSettings):
         description="MLflow tracking URI (Postgres DSN injected in production)",
     )
     mlflow_artifact_root: str   = Field(
-        "s3://nyc-airbnb-models-698172256228/mlflow/",
-        description="MLflow default artifact root — S3 bucket for production model artifacts",
+        "",
+        description="MLflow default artifact root — set to your S3 bucket URI in production",
     )
     mlflow_ui_url: str          = Field("http://localhost:5000", description="MLflow UI URL")
 
     # ── Alerts ─────────────────────────────────────────────────────────────────
-    alerts_file: Path           = Field("models/nyc/alerts.json", description="JSON alert log path")
+    alerts_file: Path           = Field(_ROOT / "models/nyc/alerts.json", description="JSON alert log path")
     slack_webhook_url: str      = Field("",          description="Slack incoming webhook URL")
     slack_critical_channel: str = Field("",          description="Override channel for critical alerts")
 
@@ -85,7 +85,10 @@ class Settings(BaseSettings):
     @field_validator("log_format")
     @classmethod
     def _lower_log_format(cls, v: str) -> str:
-        return v.lower()
+        v = v.lower()
+        if v not in {"json", "text"}:
+            raise ValueError(f"LOG_FORMAT must be 'json' or 'text', got '{v}'")
+        return v
 
     # ── Derived helpers ────────────────────────────────────────────────────────
 

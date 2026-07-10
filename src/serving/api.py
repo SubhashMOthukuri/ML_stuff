@@ -136,17 +136,21 @@ def _guard_price(price_usd: float, request_id: str) -> None:
 
 # ── singletons (populated at startup) ────────────────────────────────────────
 
-predictor:    NYCAirbnbPredictorONNX = None
-cache:        PredictionCache        = None
-store:        RequestStore           = None
-dlq:          DeadLetterQueue        = None
-drift:        DriftMonitor           = None
-shadow:       ShadowPredictor        = None
-ground_truth: GroundTruthStore       = None
-ab_test:      ABTest                 = None
-canary:       CanaryDeployment       = None
-batch_store:  BatchJobStore          = None
-batch_worker: BatchWorker            = None
+# These are None only during the startup window before lifespan() completes.
+# FastAPI/uvicorn does not route requests until lifespan yields, so all route
+# handlers see non-None values. The # type: ignore[assignment] acknowledges
+# the pre-startup None without lying about the type at usage sites.
+predictor:    NYCAirbnbPredictorONNX = None  # type: ignore[assignment]
+cache:        PredictionCache        = None  # type: ignore[assignment]
+store:        RequestStore           = None  # type: ignore[assignment]
+dlq:          DeadLetterQueue        = None  # type: ignore[assignment]
+drift:        DriftMonitor           = None  # type: ignore[assignment]
+shadow:       ShadowPredictor        = None  # type: ignore[assignment]
+ground_truth: GroundTruthStore       = None  # type: ignore[assignment]
+ab_test:      ABTest                 = None  # type: ignore[assignment]
+canary:       CanaryDeployment       = None  # type: ignore[assignment]
+batch_store:  BatchJobStore          = None  # type: ignore[assignment]
+batch_worker: BatchWorker            = None  # type: ignore[assignment]
 _r2_test:     float                  = 0.0
 
 
@@ -265,7 +269,7 @@ async def observe(request: Request, call_next) -> Response:
         metrics.record_error(endpoint)
         # /predict pushes to DLQ itself (with full payload); skip here to avoid duplicates.
         # For all other endpoints we push a minimal entry since we have no body.
-        if dlq and endpoint != "/predict":
+        if dlq and endpoint != "/v1/predict":
             dlq.push(
                 payload     = {"url": str(request.url), "method": request.method},
                 error       = f"HTTP {response.status_code}",
@@ -409,6 +413,8 @@ def root():
 
 @app.get("/health")
 def health():
+    if predictor is None:  # type: ignore[comparison-overlap]  # startup-window guard
+        raise HTTPException(status_code=503, detail="Service starting up")
     m    = metrics.summary()
     info = predictor.model_info()
     return {
@@ -419,15 +425,15 @@ def health():
         "error_rate":        m["totals"]["error_rate"],
         "model_r2":          info["r2_test"],
         "inference_backend": info["inference_backend"],
-        "cache":             cache.stats(),
-        "dlq_size":          dlq.size(),
-        "store_rows":        store.count(),
+        "cache":             cache.stats() if cache else None,
+        "dlq_size":          dlq.size() if dlq else None,
+        "store_rows":        store.count() if store else None,
     }
 
 
 @app.get("/health/ready")
 def readiness():
-    if predictor is None:
+    if predictor is None:  # type: ignore[comparison-overlap]  # startup-window guard
         raise HTTPException(status_code=503, detail="Model not loaded")
     return {"ready": True}
 
@@ -688,7 +694,7 @@ def predict(listing: ListingFeatures, request: Request,
         if cached:
             span.set_attribute("cache.hit", True)
             store.log_prediction(request_id, raw, cached, cache_hit=True, listing_id=listing_id)
-            metrics.record_prediction_full(cached["price_usd"], arm="champion", cache_hit=True)
+            metrics.record_prediction(cached["price_usd"], arm="champion", cache_hit=True)
             logger.info("predict | rid=%s CACHE HIT %s → %s", request_id[:8], listing.borough, cached["price_str"])
             top_features = None
             if explain:
@@ -731,7 +737,7 @@ def predict(listing: ListingFeatures, request: Request,
         # ── 3. write-through: cache + store ───────────────────────────────
         cache.set(raw, result)
         store.log_prediction(request_id, raw, result, cache_hit=False, listing_id=listing_id)
-        metrics.record_prediction(result["price_usd"])  # in-memory only; prom recorded after routing below
+        # prom metrics recorded after routing below (arm not known yet)
 
         # ── 4. routing: canary → A/B → shadow (priority order) ──────────────
         # Canary and A/B show challenger output to real users.
@@ -787,12 +793,9 @@ def predict(listing: ListingFeatures, request: Request,
         # rate jumps 3× the canary baseline, it auto-reverts files + alerts.
         canary.record_post_promotion(_infer_ms, success=True)
 
-        # Prometheus: record prediction with final arm (known only after routing)
-        from src.core.metrics import prom_predictions_total, prom_prediction_price_usd
-        prom_predictions_total.labels(arm=routed_arm, cache_hit="false").inc()
-        prom_prediction_price_usd.observe(result["price_usd"])
-
         _guard_price(result["price_usd"], request_id)
+
+        metrics.record_prediction(result["price_usd"], arm=routed_arm, cache_hit=False)
 
         top_features = None
         if explain:

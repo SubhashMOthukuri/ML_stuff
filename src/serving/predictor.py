@@ -13,11 +13,13 @@ On Linux+GPU → swap to Triton with one config change
 import json
 import pickle
 import logging
+import threading
 import numpy as np
 import pandas as pd
 import onnxruntime as rt
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +69,10 @@ class NYCAirbnbPredictorONNX:
 
         # SHAP TreeExplainer — uses XGBoost pkl (not ONNX) to read tree structure.
         # Initialized lazily on first explain call so startup is never blocked.
-        self._shap_explainer = None
-        self._xgb_pkl_path   = model_dir / "nyc_xgb_model.pkl"
+        # Lock prevents concurrent requests from redundantly initialising it.
+        self._shap_explainer      = None
+        self._shap_explainer_lock = threading.Lock()
+        self._xgb_pkl_path        = model_dir / "nyc_xgb_model.pkl"
 
         logger.info(
             "NYCAirbnbPredictorONNX ready | providers=%s features=%d neighbourhoods=%d",
@@ -149,8 +153,6 @@ class NYCAirbnbPredictorONNX:
         "minimum_nights":              "Minimum nights",
         "host_listings_count":         "Host listings count",
         "is_peak_season":              "Peak season",
-        "is_weekend":                  "Weekend",
-        "instant_bookable":            "Instant bookable",
         "log_accommodates":            "Guests capacity (log)",
         "log_bedrooms":                "Bedrooms (log)",
         "log_bathrooms":               "Bathrooms (log)",
@@ -185,17 +187,24 @@ class NYCAirbnbPredictorONNX:
         "month":                       "Month",
         "day_of_week":                 "Day of week",
         "is_weekend":                  "Weekend",
+        "instant_bookable":            "Instant bookable",
     }
 
     def _get_shap_explainer(self):
-        """Lazy-init TreeExplainer — loads XGBoost pkl once, reuses forever."""
-        if self._shap_explainer is not None:
+        """Lazy-init TreeExplainer — loads XGBoost pkl once, reuses forever.
+
+        Lock ensures concurrent explain requests don't each load the pkl and
+        initialise TreeExplainer in parallel (2-4 s each, OOM risk on t3.small).
+        """
+        if self._shap_explainer is not None:   # fast path — no lock needed
             return self._shap_explainer
-        import shap
-        with open(self._xgb_pkl_path, "rb") as f:
-            xgb_model = pickle.load(f)
-        self._shap_explainer = shap.TreeExplainer(xgb_model)
-        logger.info("SHAP TreeExplainer initialised from %s", self._xgb_pkl_path.name)
+        with self._shap_explainer_lock:
+            if self._shap_explainer is None:   # re-check after acquiring lock
+                import shap
+                with open(self._xgb_pkl_path, "rb") as f:
+                    xgb_model = pickle.load(f)
+                self._shap_explainer = shap.TreeExplainer(xgb_model)
+                logger.info("SHAP TreeExplainer initialised from %s", self._xgb_pkl_path.name)
         return self._shap_explainer
 
     def explain_raw(self, raw: dict, price_usd: float, top_n: int = 5) -> list[dict]:
@@ -364,12 +373,15 @@ class NYCAirbnbPredictorONNX:
         r["room_type_Entire home/apt_x_bedrooms"]            = r["room_type_Entire home/apt"] * r["bedrooms"]
         r["room_type_Shared room_x_accommodates"]            = r["room_type_Shared room"] * r["accommodates"]
 
-        # Temporal features — use current datetime so model sees what season/day it is
-        now = datetime.now()
+        # Temporal features — must use NYC Eastern Time.
+        # Training data is NYC listings; is_weekend / is_peak_season must match that timezone.
+        # datetime.now() uses server-local time (UTC in prod) which flips is_weekend at 8 pm EST.
+        _NYC_TZ = ZoneInfo("America/New_York")
+        now = datetime.now(tz=_NYC_TZ)
         checkin_date = raw.get("checkin_date")
         if checkin_date:
             try:
-                checkin = datetime.strptime(checkin_date, "%Y-%m-%d")
+                checkin = datetime.strptime(checkin_date, "%Y-%m-%d").replace(tzinfo=_NYC_TZ)
                 days_to_checkin = max(0, (checkin - now).days)
             except ValueError:
                 days_to_checkin = 30

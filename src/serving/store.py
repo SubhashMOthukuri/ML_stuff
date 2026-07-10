@@ -183,8 +183,8 @@ class RequestStore:
                     if stmt:
                         try:
                             conn.execute(stmt)
-                        except Exception:
-                            pass
+                        except sqlite3.OperationalError:
+                            pass  # column already exists — expected on re-init
 
     # ── writes ────────────────────────────────────────────────────────────────
 
@@ -196,7 +196,7 @@ class RequestStore:
         cache_hit: bool = False,
         listing_id: str | None = None,
     ) -> None:
-        """Append one prediction row — called on every /predict cache miss."""
+        """Append one prediction row — called on every /predict request (hits and misses)."""
         sql = """INSERT INTO predictions
                    (request_id, timestamp, listing_id, borough, room_type, accommodates,
                     bedrooms, bathrooms, predicted_price, log_price, cache_hit, features_json)

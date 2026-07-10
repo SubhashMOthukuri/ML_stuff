@@ -14,10 +14,11 @@ Hierarchy:
   │   ├── ModelNotLoadedError
   │   └── FeatureEngineeringError
   ├── CacheError            — Redis read/write failures
+  ├── StoreError            — prediction/shadow DB read/write failures
   ├── AuthError             — API key / token failures
   ├── ConfigError           — missing or invalid configuration at startup
   ├── VaultError            — Oracle Vault secret fetch failures
-  └── DataQualityError      — input validation failures (moved from nyc_data_validator)
+  └── DataQualityError      — input validation failures
 """
 
 
@@ -114,7 +115,22 @@ class DataQualityError(NYCBaseError):
     """Input or snapshot data failed Pandera validation gates."""
 
     def __init__(self, stage: str, errors: list[str]):
+        n = len(errors)
+        first = errors[0] if errors else "unknown"
+        suffix = f" (+{n - 1} more)" if n > 1 else ""
         super().__init__(
-            f"Data quality gate failed at stage '{stage}': {errors[0] if errors else 'unknown'}",
+            f"Data quality gate failed at stage '{stage}' [{n} error(s)]: {first}{suffix}",
             details={"stage": stage, "errors": errors},
+        )
+
+
+# ── Store ─────────────────────────────────────────────────────────────────────
+
+class StoreError(NYCBaseError):
+    """Prediction store or shadow DB read/write failure."""
+
+    def __init__(self, operation: str, reason: str):
+        super().__init__(
+            f"Store {operation} failed: {reason}",
+            details={"operation": operation, "reason": reason},
         )

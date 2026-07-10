@@ -17,7 +17,7 @@ Custom ML metrics exposed to Prometheus:
 
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from prometheus_client import Counter, Gauge, Histogram
 
@@ -70,10 +70,9 @@ class _Metrics:
         self._lock = threading.Lock()
         self._start_time = time.time()
 
-        self._requests: dict[str, int]          = defaultdict(int)
-        self._errors:   dict[str, int]          = defaultdict(int)
-        self._latencies: dict[str, list[float]] = defaultdict(list)
-        self._MAX_SAMPLES = 1000
+        self._requests: dict[str, int]            = defaultdict(int)
+        self._errors:   dict[str, int]            = defaultdict(int)
+        self._latencies: dict[str, deque[float]]  = defaultdict(lambda: deque(maxlen=1000))
 
         self._pred_count = 0
         self._pred_sum   = 0.0
@@ -90,24 +89,20 @@ class _Metrics:
 
     def record_latency(self, endpoint: str, latency_ms: float) -> None:
         with self._lock:
-            samples = self._latencies[endpoint]
-            samples.append(latency_ms)
-            if len(samples) > self._MAX_SAMPLES:
-                samples.pop(0)
+            self._latencies[endpoint].append(latency_ms)
 
-    def record_prediction(self, price_usd: float) -> None:
-        """Update in-memory prediction stats (JSON summary only)."""
+    def _record_prediction_inmem(self, price_usd: float) -> None:
+        self._pred_count += 1
+        self._pred_sum   += price_usd
+        if price_usd < self._pred_min:
+            self._pred_min = price_usd
+        if price_usd > self._pred_max:
+            self._pred_max = price_usd
+
+    def record_prediction(self, price_usd: float, arm: str, cache_hit: bool) -> None:
+        """Update in-memory stats and Prometheus metrics."""
         with self._lock:
-            self._pred_count += 1
-            self._pred_sum   += price_usd
-            if price_usd < self._pred_min:
-                self._pred_min = price_usd
-            if price_usd > self._pred_max:
-                self._pred_max = price_usd
-
-    def record_prediction_full(self, price_usd: float, arm: str, cache_hit: bool) -> None:
-        """Update both in-memory stats and Prometheus metrics."""
-        self.record_prediction(price_usd)
+            self._record_prediction_inmem(price_usd)
         prom_predictions_total.labels(
             arm=arm, cache_hit="true" if cache_hit else "false"
         ).inc()
@@ -118,7 +113,7 @@ class _Metrics:
             uptime_s = time.time() - self._start_time
 
             endpoint_stats = {}
-            for ep in set(self._requests) | set(self._errors):
+            for ep in self._requests.keys() | self._errors.keys():
                 reqs = self._requests[ep]
                 errs = self._errors[ep]
                 lats = self._latencies[ep]

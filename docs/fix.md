@@ -327,6 +327,235 @@ The workflow is **manual-trigger only** and **dry-run by default** — you must 
 
 ---
 
-## Known remaining item
+## 23. `src/core/config.py` — `_ROOT` pointed to `src/`, not the project root
 
-**Frontend runs as root:** The official `nginx:alpine` image requires root to bind port 80. The fix is to switch to `nginxinc/nginx-unprivileged` (listens on 8080) and update `frontend/nginx.conf` and `frontend.yaml` accordingly. Left intentionally — security team item.
+**Problem:** `_ROOT = Path(__file__).resolve().parents[1]` resolves to `src/`. Every path anchored to it (MLflow SQLite DB, alerts JSON) landed inside the package tree instead of the project root.
+
+**Fix:** `parents[2]` — one level further up.
+
+```python
+_ROOT = Path(__file__).resolve().parents[2]   # ML_stuff/ project root
+```
+
+---
+
+## 24. `src/core/config.py` — `alerts_file` default was a bare relative path
+
+**Problem:** `Field("models/nyc/alerts.json", ...)` resolves relative to wherever the process is launched from. Running from a subdirectory silently wrote alerts to the wrong location.
+
+**Fix:** Anchor to `_ROOT` (which was itself fixed in #23).
+
+```python
+alerts_file: Path = Field(_ROOT / "models/nyc/alerts.json", ...)
+```
+
+---
+
+## 25. `src/core/config.py` — `log_format` accepted any string
+
+**Problem:** `LOG_FORMAT=jsn` or any typo silently passed validation, then caused a mismatch in `setup_logging()`.
+
+**Fix:** Validator rejects values that aren't `'json'` or `'text'`.
+
+```python
+@field_validator("log_format")
+@classmethod
+def _lower_log_format(cls, v: str) -> str:
+    v = v.lower()
+    if v not in {"json", "text"}:
+        raise ValueError(f"LOG_FORMAT must be 'json' or 'text', got '{v}'")
+    return v
+```
+
+---
+
+## 26. `src/core/config.py` — AWS account ID hard-coded in `mlflow_artifact_root` default
+
+**Problem:** Default value `"s3://nyc-airbnb-models-698172256228/mlflow/"` embedded the AWS account number in source code and tied the repo to a single deployment.
+
+**Fix:** Default changed to `""` with a description that says to set it in production.
+
+---
+
+## 27. `src/core/exceptions.py` — `DataQualityError` message silently dropped all errors after the first
+
+**Problem:** `errors[0] if errors else 'unknown'` — if Pandera returned 5 validation errors, only the first appeared in the log message. The rest were in `details` but invisible unless structured logs were queried.
+
+**Fix:** Message now includes the total count and a `(+N more)` suffix.
+
+```python
+n = len(errors)
+first = errors[0] if errors else "unknown"
+suffix = f" (+{n - 1} more)" if n > 1 else ""
+super().__init__(
+    f"Data quality gate failed at stage '{stage}' [{n} error(s)]: {first}{suffix}",
+    details={"stage": stage, "errors": errors},
+)
+```
+
+---
+
+## 28. `src/core/exceptions.py` — no `StoreError` for DB failures
+
+**Problem:** SQLite / Postgres errors from the prediction store and shadow store propagated as raw `psycopg2.Error` or `sqlite3.Error` — not caught by any `NYCBaseError` handler in the API layer.
+
+**Fix:** Added `StoreError(operation, reason)` to the hierarchy. Store modules should wrap DB exceptions in this type.
+
+---
+
+## 29. `src/core/logging.py` — duplicate `add_log_level` processor
+
+**Problem:** `_SHARED_PROCESSORS` contained both `structlog.stdlib.add_log_level` and `structlog.processors.add_log_level`. The native one is redundant when routing through a stdlib handler and could produce a duplicated `level` field in JSON output.
+
+**Fix:** Removed `structlog.processors.add_log_level`; kept the stdlib variant.
+
+---
+
+## 30. `src/core/logging.py` — `_SERVICE` and `_ENV` were dead code
+
+**Problem:** `settings.dd_service` and `settings.dd_env` were assigned to module-level constants but never injected into log records. Datadog relies on `service` and `env` fields being present on every structured log line.
+
+**Fix:** Added `_add_service_context` processor that stamps both fields via `setdefault` on every record.
+
+```python
+def _add_service_context(logger, method, event_dict):
+    event_dict.setdefault("service", _SERVICE)
+    event_dict.setdefault("env", _ENV)
+    return event_dict
+```
+
+---
+
+## 31. `src/core/logging.py` — idempotency check broke under pytest
+
+**Problem:** `if root.handlers: return` — pytest adds its own handler to the root logger before any test runs, so `setup_logging()` returned immediately without configuring structlog. Tests ran with structlog in its unconfigured default state.
+
+**Fix:** Replaced the handler-presence check with a module-level `_CONFIGURED` boolean flag.
+
+---
+
+## 32. `src/core/metrics.py` — `list.pop(0)` for rolling latency buffer was O(n)
+
+**Problem:** `record_latency()` maintained a bounded list by calling `samples.pop(0)` when the list exceeded 1000 entries. `list.pop(0)` shifts all remaining elements — O(n) per eviction.
+
+**Fix:** `defaultdict(lambda: deque(maxlen=1000))`. `deque` auto-evicts from the left in O(1) and needs no explicit length check.
+
+---
+
+## 33. `src/core/metrics.py` — split `record_prediction` / `record_prediction_full` was a partial-update footgun
+
+**Problem:** Two public methods existed: `record_prediction(price)` (in-memory only) and `record_prediction_full(price, arm, cache_hit)` (in-memory + Prometheus). A caller using the wrong one silently skipped the Prometheus counter and histogram.
+
+**Fix:** Merged into a single `record_prediction(price_usd, arm, cache_hit)` that always updates both. The in-memory-only path is now private (`_record_prediction_inmem`). `api.py` updated to use two consolidated call sites — one on cache hit, one after routing when the final arm is known.
+
+---
+
+## 34. `src/serving/predictor.py` — SHAP `_get_shap_explainer()` race condition under concurrent load
+
+**Problem:** The lazy-init check `if self._shap_explainer is not None` had no lock. Multiple concurrent `/predict?explain=true` requests could all find `None` at the same time and each start loading the XGBoost pkl + initialising `TreeExplainer` (2–4 s each) in parallel. On a t3.small this risks OOM and redundant CPU work.
+
+**Fix:** Added `threading.Lock()` to the predictor. Fast path (already initialised) checks without acquiring the lock. Lock is only acquired on the first init, with a double-checked locking pattern (`if self._shap_explainer is None` inside the lock).
+
+---
+
+## 35. `src/serving/predictor.py` — duplicate keys in `_FEATURE_LABELS` dict
+
+**Problem:** `instant_bookable` appeared twice (lines 152 and 153) and `is_weekend` appeared twice (lines 151 and 187). Python silently uses the last definition — the first is dead code. If someone ever assigned different labels to the duplicates, only one would take effect with no error.
+
+**Fix:** Removed the two stale duplicates, leaving one canonical entry for each at the end of the dict.
+
+---
+
+## 36. `src/serving/predictor.py` — `datetime.now()` used server-local time instead of NYC timezone
+
+**Problem:** `is_weekend`, `month`, `is_peak_season`, and `day_of_week` were computed with `datetime.now()` which uses the server's local timezone. In production (UTC server), a Friday 11 pm EST request becomes Saturday 3 am UTC — flipping `is_weekend` from True to False. The model was trained on NYC data so inference must use NYC Eastern Time.
+
+**Fix:** Replaced with `datetime.now(tz=ZoneInfo("America/New_York"))`. Also made `checkin_date` parsing timezone-aware so `(checkin - now).days` doesn't raise on mixed-aware/naive subtraction. Removed the unused `timezone` import that was left from an earlier draft.
+
+---
+
+## 37. `src/serving/api.py` — DLQ double-push on `/v1/predict` errors
+
+**Problem:** The `observe` middleware guard was `endpoint != "/predict"`. The actual path is `/v1/predict`. Because `/v1/predict != "/predict"` is True, whenever the predict handler pushed to DLQ itself (inference error) and then raised HTTP 500, the middleware also pushed — resulting in two DLQ entries per inference failure.
+
+**Fix:** Changed guard to `endpoint != "/v1/predict"`.
+
+---
+
+## 38. `src/serving/api.py` — `_guard_price` ran after `metrics.record_prediction`
+
+**Problem:** An out-of-range predicted price triggered an HTTP 422, but only after `record_prediction` had already incremented Prometheus counters and the in-memory histogram with the invalid value. Metrics contained garbage data from model failures.
+
+**Fix:** Swapped order — `_guard_price` now runs before `record_prediction`.
+
+---
+
+## 39. `src/serving/api.py` — `/health` endpoint crashed on `None` before startup completed
+
+**Problem:** `/health` called `predictor.model_info()`, `cache.stats()`, `store.count()` without a None guard. Any health check during the startup window (before `lifespan()` yielded) produced `AttributeError: 'NoneType' object has no attribute 'model_info'`. K8s would see a 500 from a pod that wasn't yet ready.
+
+**Fix:** Added `if predictor is None: raise HTTPException(503, ...)` guard, mirroring the existing pattern in `/health/ready`. Other singletons accessed defensively with `if cache else None`.
+
+---
+
+## 40. `src/serving/api.py` — global singletons typed as concrete types but initialised to `None`
+
+**Problem:** `predictor: NYCAirbnbPredictorONNX = None` is a type annotation lie. Type checkers see the type as non-Optional and mark downstream `is None` guards as "unreachable". Static analysis and IDE null-safety tooling trust the annotation and will not flag actual None dereferences.
+
+**Fix:** Added `# type: ignore[assignment]` at each declaration with an explanatory comment: lifespan guarantees all singletons are set before any request is served, so the usage-site type is correct and the pre-startup None is a transient initialisation detail.
+
+---
+
+## 41. `src/serving/cache.py` — stale cached result when `checkin_date` spans days
+
+**Problem:** Cache keys were `md5(raw_inputs)`. `days_to_checkin` is computed as `(checkin_date - today)` inside `_engineer()`, so the same `checkin_date` input produces a different feature value every day. A cached prediction from 45 days out would be served the next day when the true value is 44 days out, silently using stale temporal features.
+
+**Fix:** Added today's date (`date.today().isoformat()`) to the key material under the `_date` key. Cache entries now expire naturally both by TTL and by day rollover.
+
+---
+
+## 42. `src/serving/cache.py` — `set()` silently swallowed all serialisation exceptions
+
+**Problem:** `except Exception: pass` meant any failure (non-serialisable result field, Redis timeout mid-write) produced zero log output. The prediction was still served, but debugging why cache hit rate was 0% was difficult.
+
+**Fix:** Changed to `except Exception as exc: logger.debug("Cache set failed: %s", exc)`.
+
+---
+
+## 43. `src/serving/store.py` — SQLite migration caught all exceptions, masking real errors
+
+**Problem:** `ALTER TABLE ADD COLUMN listing_id` raises `sqlite3.OperationalError("duplicate column name")` when the column exists — this is expected and should be silently ignored. But bare `except Exception: pass` also silently swallowed disk-full errors, syntax errors in the migration SQL, and corrupted-database errors.
+
+**Fix:** Scoped the catch to `sqlite3.OperationalError` only.
+
+---
+
+## 44. `src/serving/batch.py` — jobs that crashed during processing stayed as `"processing"` forever
+
+**Problem:** `BatchWorker._loop()` wrapped `_process()` in `try/except` and logged the exception, but left the job document with `status="processing"`. Pollers calling `GET /predict-batch/{job_id}` would keep getting `"processing"` until the 1-hour TTL expired, then receive a 404 with no indication of failure.
+
+**Fix:** The loop's except block now calls `self._store._patch(job_id, {"status": "failed"})` before re-logging, so pollers see a terminal state immediately.
+
+---
+
+## 45. `src/serving/drift.py` — Postgres DSN corrupted by wrapping in `Path()`
+
+**Problem:** `self._db = Path(db_path or settings.prediction_db)`. On Linux/macOS, `Path("postgresql://user:pw@host/db")` normalises the double slash to a single slash, producing `"postgresql:/user:pw@host/db"`. That malformed URI causes `psycopg2.connect()` to fail. Drift monitoring silently returned `[]` in production Postgres mode, meaning drift was never actually computed.
+
+**Fix:** Store as raw string: `self._db = str(db_path) if db_path else settings.prediction_db`.
+
+---
+
+## 46. `src/serving/drift.py` — psycopg2 connection leaked on query exception
+
+**Problem:** The Postgres branch in `_load_recent()` called `conn.close()` at the end but not in a `finally` block. If `cur.execute()` or `fetchall()` raised, the connection was leaked to GC.
+
+**Fix:** Added `try/finally` around the query block for both Postgres and SQLite paths.
+
+---
+
+## 47. `src/serving/drift.py` — `_categorical_psi` used `list.count()` in a loop — O(n × k)
+
+**Problem:** For each of k categories, `current_values.count(cat)` did a full linear scan of the n-element list. For `borough` (5 categories) with 1000 samples, this was 5000 comparisons when 1000 would suffice.
+
+**Fix:** Pre-compute `Counter(current_values)` once (O(n)), then use `.get()` per category (O(1)).
