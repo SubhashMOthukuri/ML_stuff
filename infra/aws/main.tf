@@ -152,7 +152,7 @@ resource "aws_iam_role_policy_attachment" "eks_ecr_policy" {
 resource "aws_eks_cluster" "main" {
   name     = var.app_name
   role_arn = aws_iam_role.eks_cluster.arn
-  version  = "1.31"
+  version  = "1.35"
 
   vpc_config {
     subnet_ids              = concat(aws_subnet.public[*].id, aws_subnet.private[*].id)
@@ -243,10 +243,11 @@ resource "aws_db_instance" "predictions" {
   password               = var.db_password
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
-  skip_final_snapshot    = true
-  publicly_accessible    = false
-  multi_az               = true
-  deletion_protection    = false
+  skip_final_snapshot       = false
+  final_snapshot_identifier = "${var.app_name}-predictions-final"
+  publicly_accessible       = false
+  multi_az                  = true
+  deletion_protection       = true
   # Free Tier restriction on this AWS account caps backup retention below 7
   # days (7 was the intended production value — see bugs.txt). Reduced to 1
   # (the max this account's Free Tier plan accepts) to unblock provisioning;
@@ -296,7 +297,7 @@ data "aws_caller_identity" "current" {}
 
 resource "aws_secretsmanager_secret" "app" {
   name                    = "${var.app_name}/prod"
-  recovery_window_in_days = 0
+  recovery_window_in_days = 7
   tags = { Name = var.app_name }
 }
 

@@ -73,17 +73,20 @@ jobs:
       - name: Download models from S3
         run: aws s3 sync s3://nyc-airbnb-models-698172256228/nyc/ models/nyc/
 
-      - name: Build & push backend
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push backend (multi-arch)
         run: |
-          docker build \
+          docker buildx build \
+            --platform linux/arm64,linux/amd64 \
             -t 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb:${{ steps.tag.outputs.tag }} \
             -t 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb:latest \
+            --push \
             .
-          docker push 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb:${{ steps.tag.outputs.tag }}
-          docker push 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb:latest
 
       - name: Scan backend image for CVEs (Trivy)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.20.0
         with:
           image-ref: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb:${{ steps.tag.outputs.tag }}
           format: table
@@ -124,7 +127,7 @@ jobs:
           docker push 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend:latest
 
       - name: Scan frontend image for CVEs (Trivy)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.20.0
         with:
           image-ref: 698172256228.dkr.ecr.us-east-2.amazonaws.com/nyc-airbnb-frontend:${{ steps.tag.outputs.tag }}
           format: table

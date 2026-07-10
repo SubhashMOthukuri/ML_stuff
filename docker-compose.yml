@@ -20,6 +20,8 @@ services:
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes --appendfsync everysec
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data          # persist AOF + DLQ entries across restarts
     networks:
       - backend
     healthcheck:
@@ -209,6 +211,7 @@ networks:
     driver: bridge
 
 volumes:
+  redis_data:          # Redis AOF persistence (DLQ survives restarts)
   predictions_data:    # named volume — survives container restarts
   mlflow_data:         # MLflow SQLite DB + artifact store
   prometheus_data:     # Prometheus TSDB (30-day retention)

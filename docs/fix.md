@@ -792,3 +792,91 @@ def _add_service_context(logger, method, event_dict):
 **Problem:** `_mock_pg_store()` directly wrote to `sys.modules["psycopg2"]` and `sys.modules["psycopg2.extras"]` with no teardown. These mutations persisted for the entire test session, so any later test that imported psycopg2 would get the MagicMock instead of the real library (or whatever was there before).
 
 **Fix:** Replaced the module-level helper function with a `@pytest.fixture` that uses `monkeypatch.setitem()` — which is automatically reverted by pytest after each test. Both tests that need the stub now receive it via the fixture parameter.
+
+---
+
+## 77. `infra/aws/main.tf` — EKS cluster version 1.31 past extended-support deadline
+
+**Problem:** `aws_eks_cluster.main` was pinned to Kubernetes version `"1.31"`. Extended support for 1.31 ends 2026-11-26 (AWS account 698172256228, us-east-2). After that date, the cluster can no longer receive security patches and cannot be upgraded via normal EKS channels without risk.
+
+**Fix:** Bumped to `"1.35"`, which is fully supported through 2027.
+
+---
+
+## 78. `infra/aws/main.tf` — RDS has no deletion protection and skips final snapshot
+
+**Problem:** `aws_db_instance.predictions` had `deletion_protection = false` and `skip_final_snapshot = true`. A `terraform destroy` (or any accidental destroy) would permanently delete the production Postgres instance with no snapshot — all prediction and ground-truth history gone with no recovery path.
+
+**Fix:** Set `deletion_protection = true` and `skip_final_snapshot = false` with `final_snapshot_identifier = "${var.app_name}-predictions-final"`.
+
+---
+
+## 79. `infra/aws/main.tf` — Secrets Manager `recovery_window_in_days = 0`
+
+**Problem:** `aws_secretsmanager_secret.app` had `recovery_window_in_days = 0`, meaning the secret is permanently and immediately deleted on `terraform destroy`. All API keys, DB credentials, and Slack tokens would be unrecoverable with no grace period.
+
+**Fix:** Changed to `recovery_window_in_days = 7`, giving a 7-day window to restore before permanent deletion.
+
+---
+
+## 80. `docker-compose.yml` — Redis has no named volume; AOF data lost on restart
+
+**Problem:** Redis was configured with `--appendonly yes --appendfsync everysec` (AOF persistence) but had no `volumes:` entry. The AOF file was written inside the container's ephemeral layer. Any `docker compose restart redis` or host reboot silently wiped the DLQ and all cached keys.
+
+**Fix:** Added `redis_data:/data` volume mount to the redis service and declared `redis_data:` in the top-level `volumes:` block.
+
+---
+
+## 81. `infra/helm/nyc-airbnb/templates/external-secret.yaml` — Helm template defines `ClusterSecretStore` with static keys, overwriting the IRSA version
+
+**Problem:** The Helm template included a `ClusterSecretStore` resource configured with static AWS credentials (`secretRef: aws-credentials`). `infra/k8s/cluster-secret-store.yaml` defines the same resource (`aws-secrets-manager`) using IRSA (JWT service account) — the secure, credential-free approach. On every Helm upgrade, the static-credential version overwrote the IRSA version, silently downgrading the cluster's secret-fetch security posture.
+
+**Fix:** Removed the `ClusterSecretStore` block from the Helm template entirely, replacing it with a comment directing readers to the IRSA-based standalone manifest. The `ExternalSecret` (namespaced) is kept.
+
+---
+
+## 82. `tests/load/smoke.js` — `handleSummary` writes to wrong directory
+
+**Problem:** `handleSummary` returned `'load-tests/results/summary.json'` as the output path. The CI workflow creates `tests/load/results/` and the "Print summary" step checks `tests/load/results/summary.json`. The two paths diverge, so `summary.json` was written to a directory that CI never uploaded as an artifact, and the Python summary printer step silently always skipped.
+
+**Fix:** Changed the path to `'tests/load/results/summary.json'` to match what the CI workflow creates and uploads.
+
+---
+
+## 83. `.github/workflows/nightly.yml` — retrain job only installs `requirements-dev.txt`, skipping production deps
+
+**Problem:** The retrain CI job ran `pip install --no-cache-dir -r requirements-dev.txt` but not `requirements.txt`. Dev requirements typically contain only test tooling (pytest, mypy, etc.). `retrain.py` imports production libraries (XGBoost, ONNX Runtime, MLflow, etc.) that live in `requirements.txt`. The retrain would fail at import time with `ModuleNotFoundError`.
+
+**Fix:** Changed to `pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt`.
+
+---
+
+## 84. `.github/workflows/deploy.yml` — backend image built single-arch (amd64), breaks Oracle ARM nodes
+
+**Problem:** The backend `docker build` ran without `--platform`, defaulting to the `ubuntu-latest` runner's `linux/amd64` architecture. The Oracle Cloud instance uses `VM.Standard.E3.Flex` (ARM64 / `linux/arm64`). Pulling an `amd64` image onto an ARM node results in `exec format error` at container start — a silent silent deploy failure until the pod repeatedly crashes.
+
+**Fix:** Added `docker/setup-buildx-action@v3` step and changed the build command to `docker buildx build --platform linux/arm64,linux/amd64 --push`, building a proper multi-arch manifest that works on both the EKS (amd64) and Oracle (arm64) targets.
+
+---
+
+## 85. `.github/workflows/deploy.yml` — `trivy-action@master` is an unpinned floating ref
+
+**Problem:** Both Trivy scan steps used `aquasecurity/trivy-action@master`. Pinning to a branch means any commit pushed to `master` of the action repo — including malicious ones — immediately runs in the CI pipeline with full repository context and AWS credentials access.
+
+**Fix:** Pinned both to `aquasecurity/trivy-action@0.20.0`, a specific release tag.
+
+---
+
+## 86. `infra/oracle/main.tf` — SSH (port 22) open to `0.0.0.0/0`
+
+**Problem:** The OCI security list allowed SSH from any IP address. The VM has a public IP and root-equivalent `opc` user access via SSH. Brute-force and credential-stuffing attacks are routine on publicly accessible SSH ports.
+
+**Fix:** Replaced hardcoded `source = "0.0.0.0/0"` with `source = var.ssh_allowed_cidr` and added `variable "ssh_allowed_cidr"` (default kept at `"0.0.0.0/0"` with a description instructing operators to set their static IP in `terraform.tfvars` before production use).
+
+---
+
+## 87. `infra/oracle/main.tf` — port 8001 (raw FastAPI) open to the internet
+
+**Problem:** The OCI security list allowed any IP to reach port 8001 directly. Nginx is the intended public face (SSL termination on 443, rate limiting). Exposing 8001 to the internet bypasses both TLS and the nginx rate-limit layer.
+
+**Fix:** Changed `source = "0.0.0.0/0"` to `source = "10.0.0.0/16"` (VCN-internal only). External clients reach the API through nginx on 443; internal tooling (health checks, admin scripts) still reach 8001 from within the VCN.

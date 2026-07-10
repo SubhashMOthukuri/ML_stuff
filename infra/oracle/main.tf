@@ -80,10 +80,10 @@ resource "oci_core_security_list" "app" {
     protocol    = "all"
   }
 
-  # SSH
+  # SSH — restrict to var.ssh_allowed_cidr (set your static IP in tfvars)
   ingress_security_rules {
     protocol = "6"
-    source   = "0.0.0.0/0"
+    source   = var.ssh_allowed_cidr
     tcp_options {
       min = 22
       max = 22
@@ -110,10 +110,10 @@ resource "oci_core_security_list" "app" {
     }
   }
 
-  # App port (FastAPI / uvicorn)
+  # App port — restricted to VCN; nginx handles external traffic on 443
   ingress_security_rules {
     protocol = "6"
-    source   = "0.0.0.0/0"
+    source   = "10.0.0.0/16"
     tcp_options {
       min = 8001
       max = 8001

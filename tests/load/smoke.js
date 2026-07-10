@@ -248,7 +248,7 @@ export function handleSummary(data) {
   console.log('────────────────────────────────────────────────────────────\n');
 
   return {
-    'load-tests/results/summary.json': JSON.stringify(data, null, 2),
+    'tests/load/results/summary.json': JSON.stringify(data, null, 2),
     stdout: '',   // suppress default k6 summary (we printed our own above)
   };
 }

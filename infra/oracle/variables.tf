@@ -57,6 +57,12 @@ variable "ssh_public_key_path" {
   default     = "~/.ssh/id_rsa.pub"
 }
 
+variable "ssh_allowed_cidr" {
+  description = "CIDR allowed to SSH into the instance. Restrict to your static IP (e.g. '203.0.113.5/32'). Default allows all — change before production use."
+  type        = string
+  default     = "0.0.0.0/0"
+}
+
 # ── Vault secrets (kept for app env vars) ─────────────────────────────────────
 
 variable "vault_id" {
