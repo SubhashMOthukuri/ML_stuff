@@ -10,13 +10,9 @@ import pandas as pd
 import numpy as np
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -413,7 +409,7 @@ def save(df, dist_report, all_new_cols):
     logger.info(f"\n💾 Saved: {out_path}")
 
     meta = {
-        'timestamp'             : datetime.now().isoformat(),
+        'timestamp'             : datetime.now(timezone.utc).isoformat(),
         'rows'                  : df.shape[0],
         'columns_total'         : df.shape[1],
         'new_features_count'    : len(all_new_cols),

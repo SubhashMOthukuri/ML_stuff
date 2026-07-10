@@ -11,7 +11,7 @@ import numpy as np
 import json
 import pickle
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import warnings
 warnings.filterwarnings('ignore')
@@ -31,10 +31,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from xgboost import XGBRegressor
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 BASE_DIR  = Path(__file__).resolve().parents[2]
@@ -98,12 +94,14 @@ def load_and_split():
 
     # --- Neighbourhood target encoding (train-only means → no leakage) ---
     # neighbourhood_cleansed is kept as string in FE; encode it here correctly.
+    neigh_mean  = None
+    global_mean = None
     if 'neighbourhood_cleansed' in df.columns:
         # Temporarily split to get train rows for computing means
         train_idx, test_idx = train_test_split(
             df.index, test_size=TEST_SIZE, random_state=RANDOM_SEED
         )
-        neigh_mean = df.loc[train_idx].groupby('neighbourhood_cleansed')['log_price'].mean()
+        neigh_mean  = df.loc[train_idx].groupby('neighbourhood_cleansed')['log_price'].mean()
         global_mean = float(df.loc[train_idx]['log_price'].mean())
         df['neighbourhood_price_rank'] = (
             df['neighbourhood_cleansed'].map(neigh_mean).fillna(global_mean)
@@ -143,7 +141,10 @@ def load_and_split():
     logger.info(f"\n   Top 5 training rows:")
     logger.info("\n" + X_train.head().to_string())
 
-    return X_train, X_test, y_train, y_test, feature_cols
+    # neigh_mean/global_mean are returned so save_artifacts() uses the same
+    # capped-train-set means that were applied during training (not recomputed
+    # from the full uncapped dataset, which would produce different values).
+    return X_train, X_test, y_train, y_test, feature_cols, neigh_mean, global_mean
 
 
 # ============================================================================
@@ -439,21 +440,16 @@ def save_artifacts(ridge, rf, xgb, scaler, feature_cols,
                    rf_train, rf_test,
                    xgb_train, xgb_test,
                    rf_imp, xgb_imp,
-                   assumption_report, best_name):
+                   assumption_report, best_name,
+                   neigh_means_series, global_mean_val):
     logger.info("\n" + "=" * 80)
     logger.info("STEP 6 — SAVING ARTIFACTS")
     logger.info("=" * 80)
 
-    # Load neighbourhood means for saving (inference needs them)
-    df_raw = pd.read_csv(DATA_DIR / "engineered_features.csv")
-    if 'neighbourhood_cleansed' in df_raw.columns:
-        from sklearn.model_selection import train_test_split as _tts
-        train_idx, _ = _tts(df_raw.index, test_size=0.20, random_state=42)
-        neigh_means = df_raw.loc[train_idx].groupby(
-            'neighbourhood_cleansed')['log_price'].mean().to_dict()
-        global_mean_pkl = float(df_raw.loc[train_idx]['log_price'].mean())
-    else:
-        neigh_means, global_mean_pkl = {}, 0.0
+    # Neighbourhood means come from load_and_split() — same capped train set
+    # the model was actually trained on.
+    neigh_means     = neigh_means_series.to_dict() if neigh_means_series is not None else {}
+    global_mean_pkl = float(global_mean_val) if global_mean_val is not None else 0.0
 
     artifacts = {
         'nyc_ridge_model'           : ridge,
@@ -471,7 +467,7 @@ def save_artifacts(ridge, rf, xgb, scaler, feature_cols,
         logger.info(f"   💾 {name:<22}: {size_kb:>8.1f} KB  →  {path.name}")
 
     report = {
-        'timestamp'       : datetime.now().isoformat(),
+        'timestamp'       : datetime.now(timezone.utc).isoformat(),
         'target'          : TARGET,
         'n_features'      : len(feature_cols),
         'feature_cols'    : feature_cols,
@@ -524,7 +520,7 @@ def _log_to_mlflow(
     mlflow.set_tracking_uri(MLFLOW_URI)
     mlflow.set_experiment(EXPERIMENT)
 
-    with mlflow.start_run(run_name=f"exploration-{datetime.now().strftime('%Y%m%d-%H%M')}") as parent:
+    with mlflow.start_run(run_name=f"exploration-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}") as parent:
         # ── dataset info ──────────────────────────────────────────────────────
         mlflow.log_params({
             "n_train":       n_train,
@@ -606,7 +602,7 @@ def _log_to_mlflow(
 # ============================================================================
 
 def main():
-    X_train, X_test, y_train, y_test, feature_cols = load_and_split()
+    X_train, X_test, y_train, y_test, feature_cols, neigh_mean, global_mean = load_and_split()
 
     assumption_report = check_assumptions(X_train, y_train, feature_cols)
 
@@ -634,7 +630,9 @@ def main():
         rf_train, rf_test,
         xgb_train, xgb_test,
         rf_imp, xgb_imp,
-        assumption_report, best_name
+        assumption_report, best_name,
+        neigh_means_series=neigh_mean,
+        global_mean_val=global_mean,
     )
 
     # ── MLflow: log the full exploration run ──────────────────────────────────

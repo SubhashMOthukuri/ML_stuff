@@ -11,13 +11,9 @@ import numpy as np
 import json
 import re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -216,7 +212,7 @@ def save_data(df, output_path):
     logger.info(f"✓ Saved: {output_path}")
 
     metadata = {
-        'timestamp': datetime.now().isoformat(),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         'rows': df.shape[0],
         'columns': df.shape[1],
         'column_names': list(df.columns),

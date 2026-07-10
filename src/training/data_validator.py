@@ -34,7 +34,6 @@ import warnings as _warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from src.core.exceptions import DataQualityError
 
@@ -42,7 +41,6 @@ import numpy as np
 import pandas as pd
 
 os.environ.setdefault("DISABLE_PANDERA_IMPORT_WARNING", "True")
-import pandera.pandas as pa
 from pandera.pandas import Column, Check, DataFrameSchema
 from pandera.errors import SchemaError, SchemaErrors
 
@@ -418,7 +416,7 @@ def validate_engineered_features(df: pd.DataFrame) -> DataQualityReport:
         n_outside = (~df["log_price"].between(1.0, 10.5)).sum()
         if n_outside > len(df) * 0.01:
             warnings.append(
-                f"{n_outside} rows have log_price outside [2.0, 10.5] "
+                f"{n_outside} rows have log_price outside [1.0, 10.5] "
                 "(>1% of data) — check price outlier handling"
             )
 

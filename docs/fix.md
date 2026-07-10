@@ -602,16 +602,49 @@ def _add_service_context(logger, method, event_dict):
 
 ---
 
-## 53. `src/serving/canary.py` — double-promote race in `advance()`
+## 53. `src/training/data_validator.py` — warning message says `[2.0, 10.5]` but code checks `[1.0, 10.5]`
 
-**Problem:** When advancing from stage 25%→100%, `advance()` updated `stage_idx=3, current_pct=100` inside the lock and saved state, then released the lock, then called `self._promote()` (which re-acquires the lock). Between the lock release and re-acquire, a concurrent `advance()` call could see `idx=3`, trigger the `idx+1 >= len(STAGES)` branch, and call `_promote_locked()` a second time. The second promotion attempt would `shutil.copy2(CHALLENGER_ONNX, ...)` on a file already unlinked by the first promotion, raising `FileNotFoundError`. State would be corrupt (still `active=True`).
+**Problem:** `validate_engineered_features()` warns "log_price outside [2.0, 10.5]" but the check calls `df["log_price"].between(1.0, 10.5)`. The wrong lower bound in the message misleads debugging — `e^1.0 ≈ $2.72` and `e^2.0 ≈ $7.39` are very different floors. The schema also uses `Check.in_range(1.0, 10.5)`, so the message was inconsistent with everything else.
 
-**Fix:** Moved `_promote_locked()` call inside the `with self._lock:` block of `advance()` for the `next_pct == 100` case, so promotion is fully atomic with the state update.
+**Fix:** Changed message to `[1.0, 10.5]` to match the actual check. Also removed unused `from typing import Optional` and `import pandera.pandas as pa`.
 
 ---
 
-## 54. `src/serving/canary.py` — `sys.path.insert(0, BASE_DIR)` in background thread
+## 54. `src/training/cleaning.py` — `logging.basicConfig()` called at import time
 
-**Problem:** `_revert_to_previous()` called `sys.path.insert(0, str(BASE_DIR))` before importing `src.serving.alerts`. This permanently prepended `BASE_DIR` to `sys.path` on every call — if the post-promotion spike detector fired multiple times, duplicates accumulated at the front of `sys.path`, slowing all future imports. Mutating `sys.path` from a background monitoring thread is also not thread-safe with the import machinery.
+**Problem:** `logging.basicConfig(...)` at module level reconfigures the root logger whenever `cleaning.py` is imported. When imported from the API or tests (where `src.core.logging.setup_logging()` has already set up structlog JSON formatting), `basicConfig` resets the root logger's format to plain text, corrupting structured log output.
 
-**Fix:** Removed `sys.path.insert`. `src.serving.alerts` is already importable as part of the package — no path manipulation needed.
+**Fix:** Removed the `basicConfig` call from module level. Scripts that run `cleaning.py` directly have a `if __name__ == "__main__":` entry point where logging can be configured.
+
+---
+
+## 55. `src/training/cleaning.py` — `datetime.now()` uses naive local time in metadata
+
+**Problem:** `save_data()` writes `'timestamp': datetime.now().isoformat()` to the metadata JSON. In production (Docker, UTC), this is consistent, but on a developer laptop in e.g. EST, the timestamp differs by 5 hours from the rest of the codebase's UTC timestamps, making temporal comparisons incorrect.
+
+**Fix:** Changed to `datetime.now(timezone.utc).isoformat()` and added `timezone` to the import.
+
+---
+
+## 56. `src/training/features.py` — `logging.basicConfig()` at import time + naive `datetime.now()`
+
+**Problem:** Same two bugs as `cleaning.py`: `logging.basicConfig()` at module level poisons the root logger, and `datetime.now().isoformat()` in `save()` writes a naive local timestamp to `feature_engineering_report.json`.
+
+**Fix:** Removed `basicConfig`, added `timezone` import, changed to `datetime.now(timezone.utc).isoformat()`.
+
+---
+
+## 57. `src/training/train.py` — `logging.basicConfig()` at import time + naive timestamps
+
+**Problem:** Same `logging.basicConfig()` issue at module level. Also `datetime.now().isoformat()` in `save_artifacts()` and `datetime.now().strftime(...)` in the MLflow run name both use naive local time.
+
+**Fix:** Removed `basicConfig`, added `timezone` to import, and changed both `datetime.now()` calls to `datetime.now(timezone.utc)`.
+
+---
+
+## 58. `src/training/train.py` — `save_artifacts()` re-reads CSV and hardcodes `random_state=42` for neighbourhood means
+
+**Problem:** `save_artifacts()` re-read `engineered_features.csv` and ran `train_test_split(df_raw.index, test_size=0.20, random_state=42)` to compute neighbourhood means for inference. This hardcoded `42` is a copy of `RANDOM_SEED`; if someone changes `RANDOM_SEED`, the pkl means silently diverge from what the model was trained on. The redundant CSV read also adds unnecessary I/O.
+
+**Fix:** `load_and_split()` now returns `neigh_mean` and `global_mean` alongside the train/test splits, and `save_artifacts()` receives them directly — single source of truth, no re-read.
+
