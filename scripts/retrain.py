@@ -60,7 +60,6 @@ from src.training.data_validator import (
     validate_raw_snapshot,
     validate_clean_listings,
     validate_engineered_features,
-    DataQualityError,
 )
 
 BASE_DIR   = Path(__file__).resolve().parents[1]
@@ -186,7 +185,7 @@ def download_fresh_data() -> Path:
 
     # Extract the ISO date from the URL path for a stable filename
     url_parts = [p for p in url.split("/") if len(p) == 10 and p.count("-") == 2]
-    date_str  = url_parts[-1] if url_parts else datetime.now().strftime("%Y-%m-%d")
+    date_str  = url_parts[-1] if url_parts else datetime.now(timezone.utc).strftime("%Y-%m-%d")
     out_path  = raw_dir / f"listings_raw_{date_str}.csv.gz"
 
     if out_path.exists():
@@ -709,7 +708,7 @@ def register_with_mlflow(
         else MODEL_DIR / "challenger.onnx"
     )
 
-    with mlflow.start_run(run_name=f"retrain-{datetime.now().strftime('%Y%m%d-%H%M')}") as run:
+    with mlflow.start_run(run_name=f"retrain-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}") as run:
         # ── hyperparams (tuned > fixed fallback) ─────────────────────────────
         effective_params = tuned_params if tuned_params else XGB_PARAMS
         mlflow.log_params({k: str(v) for k, v in effective_params.items()})
@@ -1006,7 +1005,6 @@ def main(
             logger.warning("Could not save challenger artefacts: %s", exc)
 
         try:
-            sys.path.insert(0, str(BASE_DIR))
             from src.serving.alerts import alerts
             alerts.push(
                 alert_type="retraining_gate_failed",

@@ -27,7 +27,7 @@ import logging
 import sys
 import urllib.request
 from pathlib import Path
-from datetime import datetime
+from datetime import date
 
 import pandas as pd
 
@@ -40,16 +40,56 @@ sys.path.insert(0, str(BASE_DIR))
 from src.serving.store import RequestStore
 from src.serving.ground_truth import GroundTruthStore
 from src.serving.alerts import alerts
-from src.training.data_validator import validate_raw_snapshot, DataQualityError
+from src.training.data_validator import validate_raw_snapshot
 
-# Latest InsideAirbnb NYC listings snapshot (updated monthly)
-INSIDEAIRBNB_URL = (
-    "https://data.insideairbnb.com/united-states/ny/new-york-city/"
-    "2024-09-04/data/listings.csv.gz"
-)
+INSIDEAIRBNB_BASE = "https://data.insideairbnb.com/united-states/ny/new-york-city"
 
 # Alert if production MAE exceeds training MAE by more than this
 MAE_ALERT_THRESHOLD_DOLLARS = 10.0
+
+
+def _find_via_index() -> str | None:
+    """Fetch the InsideAirbnb S3 bucket index and return the most recent NYC listings URL."""
+    import xml.etree.ElementTree as ET
+    try:
+        with urllib.request.urlopen(f"{INSIDEAIRBNB_BASE}/", timeout=20) as r:
+            tree = ET.fromstring(r.read())
+        ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+        keys = [
+            k.text for k in tree.findall(".//s3:Key", ns)
+            if k.text and k.text.endswith("data/listings.csv.gz")
+        ]
+        if keys:
+            url = f"{INSIDEAIRBNB_BASE}/{sorted(keys)[-1]}"
+            logger.info("InsideAirbnb index → latest snapshot: %s", url)
+            return url
+    except Exception as exc:
+        logger.debug("Index fetch failed (%s) — falling back to date probing", exc)
+    return None
+
+
+def _find_via_date_probe() -> str | None:
+    """Probe HEAD requests for the first 7 days of each of the past 12 months."""
+    today = date.today()
+    for months_back in range(0, 12):
+        raw_month = today.month - months_back
+        year  = today.year + (raw_month - 1) // 12
+        month = ((raw_month - 1) % 12) + 1
+        for day in (4, 3, 5, 2, 6, 7, 1):
+            try:
+                snap_date = date(year, month, day).isoformat()
+            except ValueError:
+                continue
+            url = f"{INSIDEAIRBNB_BASE}/{snap_date}/data/listings.csv.gz"
+            try:
+                req = urllib.request.Request(url, method="HEAD")
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    if r.status == 200:
+                        logger.info("Found InsideAirbnb snapshot via probe: %s", url)
+                        return url
+            except Exception:
+                pass
+    return None
 
 
 def fetch_snapshot(url: str) -> pd.DataFrame:
@@ -183,11 +223,16 @@ def run(url: str, dry_run: bool = False) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Fetch ground truth from InsideAirbnb")
-    parser.add_argument("--url",     default=INSIDEAIRBNB_URL, help="InsideAirbnb listings CSV URL")
-    parser.add_argument("--dry-run", action="store_true",       help="Match and print, no DB writes")
+    parser.add_argument("--url",     default=None, help="InsideAirbnb listings CSV URL (default: auto-discover latest)")
+    parser.add_argument("--dry-run", action="store_true", help="Match and print, no DB writes")
     args = parser.parse_args()
 
-    result = run(url=args.url, dry_run=args.dry_run)
+    url = args.url or _find_via_index() or _find_via_date_probe()
+    if url is None:
+        logger.error("Could not locate a valid InsideAirbnb NYC snapshot URL. Pass --url explicitly.")
+        sys.exit(1)
+
+    result = run(url=url, dry_run=args.dry_run)
     logger.info("Done: %s", result)
 
 

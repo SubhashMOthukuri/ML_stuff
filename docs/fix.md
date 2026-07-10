@@ -648,3 +648,43 @@ def _add_service_context(logger, method, event_dict):
 
 **Fix:** `load_and_split()` now returns `neigh_mean` and `global_mean` alongside the train/test splits, and `save_artifacts()` receives them directly — single source of truth, no re-read.
 
+---
+
+## 59. `scripts/retrain.py` — unused `DataQualityError` import
+
+**Problem:** `DataQualityError` was imported from `src.training.data_validator` but never caught or raised anywhere in the file. Dead import.
+
+**Fix:** Removed from the import list.
+
+---
+
+## 60. `scripts/retrain.py` — redundant `sys.path.insert` before late import
+
+**Problem:** Line 1009 (inside a gate-failure branch) called `sys.path.insert(0, str(BASE_DIR))` before importing `from src.serving.alerts import alerts`. The repo root was already added to `sys.path` at line 58 at module startup, so this repeated insert was a no-op that lengthened `sys.path` on every gate failure.
+
+**Fix:** Removed the redundant `sys.path.insert`.
+
+---
+
+## 61. `scripts/retrain.py` — `datetime.now()` uses naive local time (two sites)
+
+**Problem:** `datetime.now().strftime(...)` used twice without `timezone.utc`: once when building the cache filename fallback and once in the MLflow run name. Both produce local-time strings that vary by server timezone, making filenames and MLflow runs non-portable across UTC vs. local deployments.
+
+**Fix:** Changed both to `datetime.now(timezone.utc).strftime(...)`. `timezone` was already imported on the same line as `datetime`.
+
+---
+
+## 62. `scripts/fetch_ground_truth.py` — hardcoded stale InsideAirbnb URL
+
+**Problem:** `INSIDEAIRBNB_URL` was hardcoded to the September 2024 snapshot (`2024-09-04/data/listings.csv.gz`). Because this was the default for `--url`, every monthly cron run silently fetched ~2-year-old listing prices as ground truth, making all production MAE calculations meaningless.
+
+**Fix:** Removed the hardcoded constant. Added `_find_via_index()` (S3 bucket index parse) and `_find_via_date_probe()` (HEAD-probing recent months) — same strategy as `retrain.py`. `main()` now does `url = args.url or _find_via_index() or _find_via_date_probe()` and exits with an error if no live snapshot is found.
+
+---
+
+## 63. `scripts/fetch_ground_truth.py` — unused `DataQualityError` import and unused `datetime` import
+
+**Problem:** `DataQualityError` was imported from `src.training.data_validator` but never referenced. `from datetime import datetime` was imported but only `date` (from date probing) was needed.
+
+**Fix:** Removed `DataQualityError` from the import. Replaced `from datetime import datetime` with `from datetime import date`.
+
