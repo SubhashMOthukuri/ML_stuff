@@ -242,7 +242,7 @@ class TestCleanListingsFailures:
         df = _clean_df(n=3_000)
         assert not validate_clean_listings(df).passed
 
-    def test_high_null_rate_in_price_is_error(self, tmp_path):
+    def test_high_null_rate_in_price_is_error(self):
         prices = [None] * 200 + [120.0] * (N - 200)   # >1% nulls
         df = _clean_df(price=prices)
         assert not validate_clean_listings(df).passed

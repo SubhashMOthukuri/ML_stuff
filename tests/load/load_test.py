@@ -24,6 +24,7 @@ Pass/fail criteria:
 
 import asyncio
 import json
+import os
 import random
 import sys
 import time
@@ -34,6 +35,9 @@ import httpx
 
 BASE_URL     = "http://localhost:8001"
 CONCURRENCY  = 30   # max in-flight requests
+
+_API_KEY = os.getenv("NYC_API_KEY", "")
+_HEADERS = {"X-API-Key": _API_KEY} if _API_KEY else {}
 
 BOROUGHS = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
 VALID_ROOM_TYPES = ["Entire home/apt", "Private room", "Shared room", "Hotel room"]
@@ -127,7 +131,7 @@ async def send_one(
     async with sem:
         t0 = time.perf_counter()
         try:
-            r = await client.post("/predict", json=payload, timeout=15.0)
+            r = await client.post("/predict", json=payload, headers=_HEADERS, timeout=15.0)
             latency = (time.perf_counter() - t0) * 1000
             body = r.json()
             return {
@@ -162,6 +166,7 @@ async def main():
             print(f"  Store: {h['store_rows']} rows before test")
             print(f"  DLQ  : {h['dlq_size']} entries before test")
             store_rows_before = h["store_rows"]
+            dlq_before        = h["dlq_size"] or 0
         except Exception as exc:
             print(f"  ✗ API not reachable: {exc}")
             print("    Start the API first: PYTHONPATH=. uvicorn src.serving.api:app --port 8001")
@@ -233,7 +238,7 @@ async def main():
     avg = sum(latencies) / max(n, 1)
 
     # ── final check endpoints ─────────────────────────────────────────────
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(base_url=BASE_URL, headers=_HEADERS) as client:
         h_after = (await client.get("/health")).json()
         cache_s = (await client.get("/cache/stats")).json()
         dlq_r   = (await client.get("/dlq?n=5")).json()
@@ -276,7 +281,8 @@ async def main():
     print(f"    Avg price stored : ${td_r['avg_price']}")
     print()
     print(f"  DLQ")
-    print(f"    Total entries : {dlq_r['size']}  (expect 15 injected + any real 5xx)")
+    print(f"    Entries before: {dlq_before}")
+    print(f"    Total entries : {dlq_r['size']}  (expect {dlq_before + injected} = {dlq_before} before + {injected} injected + any real 5xx)")
     print(f"    5xx from test : {len(errors_5xx)}")
     print()
     if dlq_r["entries"]:
@@ -298,7 +304,7 @@ async def main():
         ("Connection errors == 0",    len(errors_0) == 0),
         ("New DB rows == 900",        new_rows == 900),
         ("Cache hits >= 180",         len(cache_hits) >= 180),
-        ("DLQ size == 15",            dlq_r["size"] == 15),
+        ("DLQ size == before + 15",   dlq_r["size"] == dlq_before + injected),
         ("p95 latency < 200 ms",      p95 < 200),
     ]
 

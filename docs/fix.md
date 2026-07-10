@@ -760,3 +760,35 @@ def _add_service_context(logger, method, event_dict):
 **Problem:** `acknowledge(id)` and `acknowledgeAll()` called `fetch()` and then unconditionally called `refresh()` — even on 4xx/5xx responses. If the API rejected the request, the UI reported success and re-fetched as if it worked, leaving the alert un-acknowledged with no error shown.
 
 **Fix:** Added `if (!r.ok) throw new Error(...)` after each fetch. Errors are caught and logged; `refresh()` only fires on success.
+
+---
+
+## 73. `tests/load/load_test.py` — DLQ size check hardcoded to 15, fails on re-run
+
+**Problem:** The pass/fail check asserted `dlq_r["size"] == 15` (the number just injected), but never saved the DLQ size captured in the preflight step. On any re-run — or in any environment where the DLQ already had entries — the check would fail even when the correct number of entries were injected.
+
+**Fix:** Saved `dlq_before = h["dlq_size"] or 0` during preflight; changed the assertion to `dlq_r["size"] == dlq_before + injected` so it checks the delta, not the absolute count.
+
+---
+
+## 74. `tests/load/load_test.py` — no `X-API-Key` header sent to authenticated endpoints
+
+**Problem:** All 1000 `/predict` calls and the final analysis GETs (`/cache/stats`, `/dlq`, `/training-data/stats`) were sent without an `X-API-Key` header. The k6 smoke test uses `__ENV.K6_API_KEY` for this purpose. In any environment where `VALID_API_KEYS` is configured (staging, CI, production), every request got 401 and every pass/fail check failed.
+
+**Fix:** Added `import os`; read `NYC_API_KEY` from the environment into `_HEADERS`; passed `headers=_HEADERS` to all `client.post("/predict", ...)` calls and set `headers=_HEADERS` as the default on the analysis `AsyncClient`.
+
+---
+
+## 75. `tests/test_data_validator.py` — `test_high_null_rate_in_price_is_error` has unused `tmp_path` fixture
+
+**Problem:** The method signature was `def test_high_null_rate_in_price_is_error(self, tmp_path)` but `tmp_path` was never referenced inside the method — a leftover from copy-paste. pytest injects and creates a temporary directory that is never used.
+
+**Fix:** Removed `tmp_path` from the parameter list.
+
+---
+
+## 76. `tests/test_store_dsn_masking.py` — `sys.modules` mutation not restored between tests
+
+**Problem:** `_mock_pg_store()` directly wrote to `sys.modules["psycopg2"]` and `sys.modules["psycopg2.extras"]` with no teardown. These mutations persisted for the entire test session, so any later test that imported psycopg2 would get the MagicMock instead of the real library (or whatever was there before).
+
+**Fix:** Replaced the module-level helper function with a `@pytest.fixture` that uses `monkeypatch.setitem()` — which is automatically reverted by pytest after each test. Both tests that need the stub now receive it via the fixture parameter.
