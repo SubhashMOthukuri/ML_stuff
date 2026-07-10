@@ -30,24 +30,18 @@ Redis cache, A/B testing, drift detection, nightly retraining, and Kubernetes de
                     │   /api/* → API        │  static frontend
                     └───────────┬──────────┘
                                 │
-              ┌─────────────────▼──────────────────┐
-              │   FastAPI (src/serving/api.py)       │
-              │   gunicorn 2 workers                 │
-              │   Port 8001                          │
-              └──────┬──────────┬───────────────────┘
-                     │          │
-          ┌──────────▼──┐  ┌────▼────────────────────────────────────┐
-          │ Redis 7      │  │ ONNX Runtime (src/serving/predictor.py) │
-          │ Cache + DLQ  │  │ XGBoost model, SHAP TreeExplainer       │
-          │ Batch queue  │  │ 58 features, log_price → expm1 → $$$    │
-          └──────────────┘  └─────────────────────────────────────────┘
-                     │
-          ┌──────────▼──────────────────────┐
-          │ Postgres / SQLite               │
-          │ predictions.db — request log    │
-          │ shadow_comparisons.db — A/B     │
-          │ canary_health.db — canary state  │
-          └─────────────────────────────────┘
+              ┌─────────────────▼──────────────────────────────────┐
+              │   FastAPI (src/serving/api.py)                      │
+              │   gunicorn 2 workers · Port 8001                    │
+              │   shadow / A/B / canary routing (pre-inference)     │
+              └──────┬──────────────┬──────────────────┬───────────┘
+                     │              │                  │
+          ┌──────────▼──┐  ┌────────▼───────────┐  ┌──▼──────────────────────┐
+          │ Redis 7      │  │ ONNX Runtime        │  │ Postgres / SQLite        │
+          │ Cache + DLQ  │  │ predictor.py        │  │ predictions.db           │
+          │ Batch queue  │  │ XGBoost + SHAP      │  │ shadow_comparisons.db    │
+          │              │  │ log_price→expm1→$   │  │ canary_health.db         │
+          └──────────────┘  └────────────────────┘  └─────────────────────────┘
 ```
 
 ---

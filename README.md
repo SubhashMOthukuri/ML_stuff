@@ -17,15 +17,15 @@ React UI ──► Nginx (SSL, rate limit, /api proxy)
                       │
                       ▼
            FastAPI (gunicorn, 2 workers)
+           shadow / A/B / canary routing (pre-inference)
                       │
        ┌──────────────┼──────────────────┐
        ▼              ▼                  ▼
-  Redis cache    ONNX Runtime       Postgres / SQLite
-  (MD5-keyed,   (champion model)   (predictions, A/B results,
-   5-min TTL)         │              ground truth, DLQ)
-                      ▼
-           shadow / A/B / canary
-           challenger evaluation
+  Redis            ONNX Runtime    Postgres / SQLite
+  (cache MD5-     (champion +     (predictions, A/B results,
+   keyed 5-min,    challenger)     ground truth)
+   DLQ, batch
+   queue)
 ```
 
 **Observability stack:** structlog → Fluent Bit → Datadog (logs) ·
@@ -341,5 +341,4 @@ See [`MODEL_CARD.md`](MODEL_CARD.md) for model-level limitations.
 - **Luxury listings excluded:** Listings above the 99th price percentile (~$1,562/night) are excluded from training. The model is unreliable for ultra-luxury properties.
 - **No booking demand data:** Occupancy rate and seasonal demand are not available from InsideAirbnb — including them would improve R² by an estimated +3–4%.
 - **NYC only:** Trained exclusively on New York City listings. Not transferable to other cities without retraining.
-- **IRSA not configured:** External Secrets Operator uses static IAM keys. Migrating to IRSA (IAM Roles for Service Accounts) is the correct long-term approach.
-- **IRSA not configured:** External Secrets Operator uses static IAM keys. Migrating to IRSA (IAM Roles for Service Accounts) is the correct long-term approach.
+- **Infrastructure currently destroyed:** AWS resources (EKS, RDS, ECR, S3) were provisioned via Terraform and ran successfully but have since been torn down (`terraform destroy`) to avoid credit burn. Re-run `terraform apply` in `infra/aws/` to redeploy — all config is in place.
