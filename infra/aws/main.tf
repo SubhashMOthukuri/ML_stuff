@@ -152,6 +152,9 @@ resource "aws_iam_role_policy_attachment" "eks_ecr_policy" {
 resource "aws_eks_cluster" "main" {
   name     = var.app_name
   role_arn = aws_iam_role.eks_cluster.arn
+  # AWS EKS requires one-minor-version-at-a-time upgrades (1.31→1.32→…→1.35).
+  # Run .github/workflows/eks-upgrade.yml BEFORE terraform apply — a direct
+  # apply from 1.31 to 1.35 will fail at the AWS API level.
   version  = "1.35"
 
   vpc_config {
