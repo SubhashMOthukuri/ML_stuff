@@ -1,0 +1,33 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+*.egg-info/
+
+# ML artefacts (injected by CI, not committed)
+mlruns/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+
+# Infra / secrets
+infra/aws/.terraform/
+infra/oracle/.terraform/
+infra/aws/terraform.tfstate*
+infra/oracle/terraform.tfstate*
+infra/aws/terraform.tfvars
+infra/oracle/terraform.tfvars
+
+# Dev tooling
+.git/
+.github/
+docs/
+tests/
+*.md

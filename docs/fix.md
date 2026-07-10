@@ -880,3 +880,19 @@ def _add_service_context(logger, method, event_dict):
 **Problem:** The OCI security list allowed any IP to reach port 8001 directly. Nginx is the intended public face (SSL termination on 443, rate limiting). Exposing 8001 to the internet bypasses both TLS and the nginx rate-limit layer.
 
 **Fix:** Changed `source = "0.0.0.0/0"` to `source = "10.0.0.0/16"` (VCN-internal only). External clients reach the API through nginx on 443; internal tooling (health checks, admin scripts) still reach 8001 from within the VCN.
+
+---
+
+## 88. `frontend/Dockerfile` — no `.dockerignore`; local `node_modules` overwrites container-installed ones
+
+**Problem:** `frontend/Dockerfile` runs `RUN npm ci` (installs Linux-native binaries inside the container) then `COPY . .` (copies the entire local directory). Without a `.dockerignore`, any local `node_modules/` directory — built on macOS with platform-specific native extensions — gets copied into the image and overwrites the correct Linux binaries. The container starts and immediately crashes on any native module call.
+
+**Fix:** Created `frontend/.dockerignore` excluding `node_modules/` and `dist/`.
+
+---
+
+## 89. `Dockerfile` (backend) — no `.dockerignore`; `.venv/` (600 MB) sent to Docker daemon on every build
+
+**Problem:** The backend Dockerfile uses path-specific `COPY` instructions so nothing wrong ends up in the image, but without a `.dockerignore` the entire working directory — including `.venv/` (600+ MB), `mlruns/`, `.git/`, `node_modules/` — is sent as build context to the Docker daemon on every `docker build`. This makes every build 10–30 s slower locally and in CI.
+
+**Fix:** Created `.dockerignore` at the repo root excluding `.venv/`, `mlruns/`, `.git/`, Terraform state files, `frontend/node_modules/`, and other non-source artifacts.

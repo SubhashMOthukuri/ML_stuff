@@ -1,0 +1,11 @@
+# Never let local node_modules shadow the ones npm ci installs inside the container.
+# Platform-specific binaries (macOS) would replace Linux ones → runtime crash.
+node_modules/
+
+# Build output (regenerated inside the container)
+dist/
+
+# Dev / editor noise
+.env*
+*.md
+.DS_Store
