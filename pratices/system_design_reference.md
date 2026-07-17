@@ -2,6 +2,74 @@
 
 ---
 
+## What to Learn for System Design Interviews (ML Engineer Focus)
+
+### Learn Deeply — You Will Be Asked These
+These come up in every FAANG system design interview for ML/backend roles. Know them well enough to draw and explain on a whiteboard.
+
+| Topic | Why Interviewers Ask |
+|-------|---------------------|
+| **Caching (Redis, TTL, cache-aside, write-through)** | "Design a prediction service" — cache is always the first optimization |
+| **Message Queue (Redis queue, Kafka)** | "How do you handle 10K batch requests?" — async queue is the answer |
+| **Rate Limiting (token bucket algorithm)** | "How do you protect your API?" — always asked for public-facing services |
+| **Load Balancing + Horizontal Scaling** | "Your service gets 10× traffic" — add servers, distribute load |
+| **SQL Indexing + Slow Query fixes** | "Your DB is slow" — missing index is #1 cause, always check this first |
+| **CAP Theorem** | "Choose between consistency and availability" — every distributed system tradeoff question |
+| **Pub/Sub + Webhooks** | "How does GitHub trigger your CI?" — event-driven architecture |
+| **Blue-Green + Canary Deployment** | "How do you deploy without downtime?" — standard for any ML model update |
+| **JWT vs Session Auth** | "How do you secure your API?" — stateless vs stateful tradeoff |
+| **Kafka** | "Design a real-time feature pipeline" — Kafka is the industry answer |
+| **Service Discovery (Kubernetes DNS)** | "How do microservices find each other?" — K8s handles this automatically |
+| **Sharding** | "Your DB has 1 billion rows" — split by key across multiple servers |
+| **Circuit Breaker** | "What if a downstream service is slow?" — fail fast, don't cascade |
+
+### Know the Concept — Explain in 2 Sentences
+You won't implement these but interviewers expect you to know what they are.
+
+| Topic | What to Say |
+|-------|-------------|
+| **Consistent Hashing** | "Distributes keys across nodes on a ring — adding a node only remaps a fraction of keys, not all" |
+| **WAL (Write-Ahead Log)** | "Postgres writes changes to a log before applying them — crash recovery replays the log" |
+| **Event Sourcing** | "Store every change as an event, not just current state — full audit trail, replayable" |
+| **CQRS** | "Separate read and write models — reads and writes scale independently" |
+| **Saga Pattern** | "Chain of transactions across microservices — each step has a compensating rollback if it fails" |
+| **Bloom Filter** | "Probabilistic data structure — 'definitely not in set' or 'maybe in set' — saves DB lookups" |
+| **Thundering Herd** | "Cache expires → 1000 requests hit DB simultaneously — fix: one request rebuilds cache, others wait" |
+| **Backpressure** | "Consumer tells producer to slow down when overwhelmed — prevents queue from exploding" |
+
+### Skip for ML Engineering Interviews
+Interviewers for ML Engineer roles rarely ask these. Focus your time elsewhere.
+
+| Skip | Reason |
+|------|--------|
+| WebRTC internals | Only for video infrastructure teams |
+| DNS / BGP internals | Network engineering, not ML |
+| Web crawler design | Backend SWE, not ML |
+| URL shortener from scratch | Classic SWE interview, rarely asked for ML roles |
+| mTLS implementation | Security engineering specialty |
+| IPv4/IPv6 | Infrastructure, not ML |
+| Multi-master conflict resolution | DB internals, not ML |
+
+### The 4 Questions That Define an ML Engineer Interview
+
+Every FAANG system design round for ML engineers comes down to these:
+
+1. **"How does your model get to production?"**
+   → Training pipeline → MLflow gate → ONNX export → Docker → ECR → Helm → EKS
+
+2. **"How do you know the model is degrading?"**
+   → PSI drift detection → Prometheus metrics → Grafana → Slack alerts → ground truth MAE
+
+3. **"How do you roll back a bad model safely?"**
+   → Shadow → A/B → canary → if health gate fails → rollback to previous ONNX version
+
+4. **"How do you handle 10× traffic?"**
+   → Redis cache (40% hit rate) → ONNX no GIL → Gunicorn workers → K8s HPA (2→5 pods)
+
+**This project answers all 4. Know these cold.**
+
+---
+
 ## 1. Distributed Systems
 
 | Topic | One Line | Real Example |
